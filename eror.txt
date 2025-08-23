@@ -1,0 +1,51 @@
+✅ Unresolved References Fix List
+🔹 1. LZ4 (CryptoManager.kt)
+
+Dependency tumhare paas already hai:
+
+implementation("org.lz4:lz4-java:1.8.0")
+
+
+Import add karo:
+
+import net.jpountz.lz4.LZ4Factory
+
+🔹 2. Compose Icons (Security, Key, Error, Wifi, QrCode, Schedule, Archive)
+
+Dependency add karo (build.gradle me):
+
+implementation("androidx.compose.material:material-icons-extended")
+
+
+Imports add karo jahan use ho raha hai:
+
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Archive
+
+🔹 3. Bluetooth / Wifi (System APIs)
+
+Agar tum native APIs use kar rahe ho:
+
+import android.bluetooth.BluetoothAdapter
+import android.net.wifi.WifiManager
+
+
+Agar tum sirf Icons use kar rahe ho → upar wala (icons import) enough hai.
+
+🔹 4. asImageBitmap
+
+Import add karo:
+
+import androidx.compose.ui.graphics.asImageBitmap
+
+✅ Final Steps
+
+build.gradle me ye line add karo:
+
+implementation("androidx.compose.material:material-icons-extended")
