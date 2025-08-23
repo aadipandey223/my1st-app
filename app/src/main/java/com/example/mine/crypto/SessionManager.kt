@@ -6,6 +6,9 @@ import java.security.PublicKey
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
+import com.example.mine.crypto.Frame
+import com.example.mine.crypto.FrameType
+import com.example.mine.crypto.FrameFlags
 
 class SessionManager(private val cryptoManager: CryptoManager) {
     
@@ -139,8 +142,9 @@ class SessionManager(private val cryptoManager: CryptoManager) {
             
             // Decrypt payload
             val aad = frame.getAAD()
+            val rxKey = session.rxKey ?: throw IllegalStateException("Session not established")
             val decrypted = cryptoManager.decryptWithAAD(
-                session.rxKey,
+                rxKey,
                 frame.ciphertext,
                 aad,
                 frame.nonce
@@ -178,8 +182,9 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         
         // Encrypt payload
         val aad = createAAD(session, destinationId, sequence, isCompressed)
+        val txKey = session.txKey ?: throw IllegalStateException("Session not established")
         val encryptionResult = cryptoManager.encryptWithAAD(
-            session.txKey,
+            txKey,
             payloadBytes,
             aad,
             nonce
@@ -194,7 +199,7 @@ class SessionManager(private val cryptoManager: CryptoManager) {
             destinationId = destinationId,
             sessionId = session.id,
             sequence = sequence,
-            ttl = 32,
+            ttl = 32.toByte(),
             nonce = nonce,
             ciphertext = encryptionResult.ciphertext,
             tag = encryptionResult.iv // Using IV as tag for GCM

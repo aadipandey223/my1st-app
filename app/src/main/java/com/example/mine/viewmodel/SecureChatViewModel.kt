@@ -17,6 +17,8 @@ import com.example.mine.network.BleManager
 import com.example.mine.network.WifiManager
 import com.example.mine.network.FusionNode
 import com.example.mine.network.FusionWifiNetwork
+import com.example.mine.network.ConnectionStatus
+import com.example.mine.network.WifiConnectionStatus
 import com.example.mine.utils.QRCodeUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -175,11 +177,11 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 // Observe connection status
                 bleManager.connectionStatus.collect { status ->
                     when (status) {
-                        is BleManager.ConnectionStatus.Connected -> {
+                        is ConnectionStatus.Connected -> {
                             _uiState.value = UiState.Connected
                             Log.d(TAG, "Connected to BLE device: ${fusionNode.name}")
                         }
-                        is BleManager.ConnectionStatus.Error -> {
+                        is ConnectionStatus.Error -> {
                             _uiState.value = UiState.Error("Connection failed: ${status.message}")
                         }
                         else -> {
@@ -206,11 +208,11 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 // Observe connection status
                 wifiManager.connectionStatus.collect { status ->
                     when (status) {
-                        is WifiManager.WifiConnectionStatus.Connected -> {
+                        is WifiConnectionStatus.Connected -> {
                             _uiState.value = UiState.Connected
                             Log.d(TAG, "Connected to WiFi network: ${fusionNetwork.ssid}")
                         }
-                        is WifiManager.WifiConnectionStatus.Error -> {
+                        is WifiConnectionStatus.Error -> {
                             _uiState.value = UiState.Error("Connection failed: ${status.message}")
                         }
                         else -> {
@@ -307,7 +309,7 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                         encryptedContent = frame.ciphertext,
                         timestamp = Date(),
                         isEncrypted = true,
-                        isCompressed = (frame.flags and 0x01) != 0
+                        isCompressed = (frame.flags.toInt() and 0x01) != 0
                     )
                     
                     val messageId = database.messageDao().insertMessage(messageEntity)
@@ -359,8 +361,7 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
 // UI States
 sealed class UiState {
     object Initial : UiState()
-    object Loading : UiState()
-    data class Loading(val message: String) : UiState()
+    data class Loading(val message: String = "Loading...") : UiState()
     object KeyGenerated : UiState()
     object DiscoveryActive : UiState()
     object Connected : UiState()

@@ -206,8 +206,8 @@ class BleManager(private val context: Context) {
         
         // Look for our service UUID in the scan record
         // This is a simplified check - in real implementation, you'd parse the scan record properly
-        val serviceUuidBytes = FUSION_SERVICE_UUID.toString().toByteArray()
-        return scanRecord.contains(serviceUuidBytes)
+        val serviceUuidString = FUSION_SERVICE_UUID.toString()
+        return scanRecord.any { it.toChar() == serviceUuidString.first() }
     }
     
     // Add discovered device to list
@@ -287,7 +287,7 @@ class BleManager(private val context: Context) {
             val descriptor = characteristic.getDescriptor(
                 UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
             )
-            descriptor.value = BluetoothGattCharacteristic.ENABLE_NOTIFICATION_VALUE
+            descriptor.value = byteArrayOf(0x01, 0x00)
             gatt.writeDescriptor(descriptor)
         }
         
@@ -297,7 +297,7 @@ class BleManager(private val context: Context) {
             val descriptor = characteristic.getDescriptor(
                 UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
             )
-            descriptor.value = BluetoothGattCharacteristic.ENABLE_NOTIFICATION_VALUE
+            descriptor.value = byteArrayOf(0x01, 0x00)
             gatt.writeDescriptor(descriptor)
         }
     }

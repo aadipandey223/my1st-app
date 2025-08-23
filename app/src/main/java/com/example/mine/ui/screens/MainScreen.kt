@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mine.ui.theme.*
 import com.example.mine.viewmodel.SecureChatViewModel
@@ -192,7 +193,7 @@ fun HeaderSection() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
-                imageVector = Icons.Default.Security,
+                imageVector = Icons.Default.Shield,
                 contentDescription = "Security",
                 modifier = Modifier.size(48.dp),
                 tint = MaterialTheme.colorScheme.primary
@@ -255,7 +256,7 @@ fun KeyGenerationSection(
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Key,
+                        imageVector = Icons.Default.VpnKey,
                         contentDescription = "Generate Key",
                         modifier = Modifier.size(20.dp)
                     )
@@ -418,7 +419,7 @@ fun DeviceItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = Icons.Default.Bluetooth,
+                imageVector = Icons.Default.BluetoothSearching,
                 contentDescription = "BLE Device",
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -476,7 +477,7 @@ fun NetworkItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = Icons.Default.Wifi,
+                imageVector = Icons.Default.WifiTethering,
                 contentDescription = "WiFi Network",
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -562,7 +563,7 @@ fun KeyExchangeSection(
                     )
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Keyboard,
+                        imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Enter Key",
                         modifier = Modifier.size(20.dp)
                     )
@@ -637,14 +638,14 @@ fun StatusSection(uiState: UiState) {
                 }
                 is UiState.Connected -> {
                     StatusItem(
-                        icon = Icons.Default.Wifi,
+                        icon = Icons.Default.WifiTethering,
                         text = "Connected to fusion node",
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
                 is UiState.SessionEstablished -> {
                     StatusItem(
-                        icon = Icons.Default.Security,
+                        icon = Icons.Default.Shield,
                         text = "Secure session established",
                         color = MaterialTheme.colorScheme.primary
                     )

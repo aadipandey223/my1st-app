@@ -1,5 +1,6 @@
 package com.example.mine.ui.screens
 
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -139,7 +140,7 @@ fun ChatHeader(onBack: () -> Unit) {
             Spacer(modifier = Modifier.weight(1f))
             
             Icon(
-                imageVector = Icons.Default.Security,
+                imageVector = Icons.Default.Shield,
                 contentDescription = "Secure",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(24.dp)
@@ -211,10 +212,10 @@ fun MessageBubble(
                     if (isOwnMessage) {
                         Icon(
                             imageVector = when (message.status) {
-                                "SENT" -> Icons.Default.Done
-                                "DELIVERED" -> Icons.Default.DoneAll
-                                "READ" -> Icons.Default.DoneAll
-                                else -> Icons.Default.Schedule
+                                            "SENT" -> Icons.Default.Done
+            "DELIVERED" -> Icons.Default.Done
+            "READ" -> Icons.Default.Done
+            else -> Icons.Default.AccessTime
                             },
                             contentDescription = "Message status",
                             tint = if (message.status == "READ") {
@@ -332,7 +333,5 @@ fun MessageInput(
     }
 }
 
-// Extension function to convert Bitmap to ImageBitmap
-fun android.graphics.Bitmap.asImageBitmap(): androidx.compose.ui.graphics.ImageBitmap {
-    return androidx.compose.ui.graphics.asImageBitmap()
-}
+
+

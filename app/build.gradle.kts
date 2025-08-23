@@ -38,10 +38,14 @@ android {
     buildFeatures {
         compose = true
     }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "2.0.21"
+    }
 }
 
 dependencies {
     // Core Android
+    implementation("org.lz4:lz4-java:1.8.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -50,48 +54,51 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.foundation)
+    implementation(libs.androidx.material.icons.extended)
     
     // Compose Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation(libs.androidx.navigation.compose)
     
     // Room Database
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    kapt(libs.androidx.room.compiler)
     
     // Cryptography
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.77")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.bouncycastle.pkix)
     
-    // LZ4 Compression
-    implementation("org.lz4:lz4-java:1.8.0")
+    // Compression - Using Java's built-in Deflate/Inflate
     
     // Bluetooth LE - Using native Android Bluetooth APIs
     
     // Network & WiFi
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation(libs.androidx.work.runtime.ktx)
     
     // QR Code Generation
-    implementation("com.google.zxing:core:3.5.2")
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.android.embedded)
     
     // Camera for QR scanning
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
     
     // Lifecycle & ViewModel
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    
+    implementation(libs.kotlinx.coroutines.android)
+    implementation("androidx.compose.ui:ui:1.6.2")
+    implementation("androidx.compose.ui:ui-graphics:1.6.2")
+
     // Testing
     testImplementation(libs.junit)
-    testImplementation("org.mockito:mockito-core:5.8.0")
-    testImplementation("org.mockito:mockito-inline:5.2.0")
+    testImplementation(libs.mockito.core)
+    testImplementation(libs.mockito.inline)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
