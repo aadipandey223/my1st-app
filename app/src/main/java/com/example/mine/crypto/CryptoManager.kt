@@ -41,9 +41,26 @@ class CryptoManager(private val context: Context) {
     
     // X25519 Key Generation
     fun generateX25519KeyPair(): KeyPair {
-        val keyPairGenerator = KeyPairGenerator.getInstance("X25519", "BC")
-        keyPairGenerator.initialize(KEY_SIZE)
-        return keyPairGenerator.generateKeyPair()
+        return try {
+            val keyPairGenerator = KeyPairGenerator.getInstance("X25519", "BC")
+            keyPairGenerator.initialize(KEY_SIZE)
+            val keyPair = keyPairGenerator.generateKeyPair()
+            android.util.Log.d("CryptoManager", "X25519 key pair generated successfully")
+            keyPair
+        } catch (e: Exception) {
+            android.util.Log.e("CryptoManager", "Failed to generate X25519 key pair", e)
+            // Fallback to RSA if X25519 fails
+            try {
+                val rsaKeyGen = KeyPairGenerator.getInstance("RSA")
+                rsaKeyGen.initialize(2048)
+                val rsaKeyPair = rsaKeyGen.generateKeyPair()
+                android.util.Log.d("CryptoManager", "RSA key pair generated as fallback")
+                rsaKeyPair
+            } catch (fallbackException: Exception) {
+                android.util.Log.e("CryptoManager", "Both X25519 and RSA key generation failed", fallbackException)
+                throw fallbackException
+            }
+        }
     }
     
     // ECDH Key Exchange

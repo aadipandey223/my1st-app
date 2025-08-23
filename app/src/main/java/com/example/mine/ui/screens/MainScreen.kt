@@ -2,6 +2,7 @@ package com.example.mine.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -10,27 +11,32 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.mine.ui.theme.*
 import com.example.mine.viewmodel.SecureChatViewModel
 import com.example.mine.viewmodel.UiState
+import com.example.mine.ui.screens.ChatScreen
 import kotlinx.coroutines.delay
+import android.util.Log
 
 enum class AppStep {
     WELCOME,
@@ -43,7 +49,7 @@ enum class AppStep {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen() {
+fun ModernMainScreen() {
     val context = LocalContext.current
     val viewModel: SecureChatViewModel = viewModel { SecureChatViewModel(context) }
     val uiState by viewModel.uiState.collectAsState()
@@ -53,6 +59,13 @@ fun MainScreen() {
     val discoveredNetworks by viewModel.discoveredNetworks.collectAsState()
     val currentSession by viewModel.currentSession.collectAsState()
     val messages by viewModel.messages.collectAsState()
+    val keyGenerationProgress by viewModel.keyGenerationProgress.collectAsState()
+    
+    // Computed property for error message to avoid smart cast issues
+    val errorMessage: String? = when (val currentState = uiState) {
+        is UiState.Error -> currentState.message
+        else -> null
+    }
     
     var currentStep by remember { mutableStateOf(AppStep.WELCOME) }
     var showQRScanner by remember { mutableStateOf(false) }
@@ -60,7 +73,6 @@ fun MainScreen() {
     var peerPublicKey by remember { mutableStateOf("") }
     var showChat by remember { mutableStateOf(false) }
     var messageText by remember { mutableStateOf("") }
-    var keyGenerationProgress by remember { mutableStateOf(0f) }
     var isGeneratingKeys by remember { mutableStateOf(false) }
     
     // Background gradient
@@ -105,6 +117,10 @@ fun MainScreen() {
             }
             is UiState.DiscoveryActive -> {
                 currentStep = AppStep.DISCOVERY
+            }
+            is UiState.Error -> {
+                // Handle error state - stay on current step but show error
+                Log.e("MainScreen", "UI Error: ${errorMessage}")
             }
             else -> {}
         }
@@ -181,6 +197,11 @@ fun MainScreen() {
                     )
                     AppStep.KEY_GENERATION -> KeyGenerationStep(
                         progress = keyGenerationProgress,
+                        error = errorMessage,
+                        onRetry = { 
+                            viewModel.resetKeyGeneration()
+                            viewModel.generateKeyPair()
+                        },
                         onComplete = {
                             currentStep = AppStep.KEY_DISPLAY
                             isGeneratingKeys = false
@@ -350,7 +371,7 @@ fun WelcomeStep(
                                 Text(
                                     text = "Generating Keys... ${(progress * 100).toInt()}%",
                                     color = Color.White,
-                                    fontWeight = FontWeight.Semibold
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         } else {
@@ -365,7 +386,7 @@ fun WelcomeStep(
                                 Text(
                                     text = "Generate Encryption Keys",
                                     color = Color.White,
-                                    fontWeight = FontWeight.Semibold
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
@@ -406,6 +427,8 @@ fun WelcomeStep(
 @Composable
 fun KeyGenerationStep(
     progress: Float,
+    error: String?,
+    onRetry: () -> Unit,
     onComplete: () -> Unit
 ) {
     LaunchedEffect(progress) {
@@ -435,6 +458,45 @@ fun KeyGenerationStep(
                 modifier = Modifier.padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Show error if present
+                if (error != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFDC2626).copy(alpha = 0.2f) // red with transparency
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = "❌ Key Generation Failed",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFCA5A5) // red-300
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = error,
+                                fontSize = 14.sp,
+                                color = Color(0xFFFCA5A5) // red-300
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(
+                                onClick = onRetry,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFDC2626) // red-600
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Retry", color = Color.White)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+                
                 // Animated icon
                 val infiniteTransition = rememberInfiniteTransition(label = "keyGen")
                 val iconRotation by infiniteTransition.animateFloat(
@@ -462,7 +524,7 @@ fun KeyGenerationStep(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "🔄",
+                        text = if (error != null) "⚠️" else "🔄",
                         fontSize = 24.sp
                     )
                 }
@@ -470,7 +532,7 @@ fun KeyGenerationStep(
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 Text(
-                    text = "Generating Keys",
+                    text = if (error != null) "Key Generation Failed" else "Generating Keys",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -479,46 +541,49 @@ fun KeyGenerationStep(
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(
-                    text = "Creating your encryption keypair...",
+                    text = if (error != null) "Please try again or check your device" else "Creating your encryption keypair...",
                     fontSize = 16.sp,
                     color = Color.Gray.copy(alpha = 0.8f)
                 )
                 
-                Spacer(modifier = Modifier.height(32.dp))
-                
-                // Progress bar
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .background(
-                            color = Color.Gray.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(4.dp)
-                        )
-                ) {
+                // Only show progress if no error
+                if (error == null) {
+                    Spacer(modifier = Modifier.height(32.dp))
+                    
+                    // Progress bar
                     Box(
                         modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
+                            .fillMaxWidth()
+                            .height(8.dp)
                             .background(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF3B82F6), // blue-500
-                                        Color(0xFF06B6D4)  // cyan-500
-                                    )
-                                ),
+                                color = Color.Gray.copy(alpha = 0.3f),
                                 shape = RoundedCornerShape(4.dp)
                             )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(progress)
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color(0xFF3B82F6), // blue-500
+                                            Color(0xFF06B6D4)  // cyan-500
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(4.dp)
+                                )
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "${(progress * 100).toInt()}% Complete",
+                        fontSize = 14.sp,
+                        color = Color.Gray.copy(alpha = 0.6f)
                     )
                 }
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Text(
-                    text = "${(progress * 100).toInt()}% Complete",
-                    fontSize = 14.sp,
-                    color = Color.Gray.copy(alpha = 0.6f)
-                )
             }
         }
     }
@@ -578,7 +643,7 @@ fun KeyDisplayStep(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     if (qrCodeBitmap != null) {
-                        androidx.compose.foundation.Image(
+                        Image(
                             bitmap = qrCodeBitmap.asImageBitmap(),
                             contentDescription = "Public Key QR Code",
                             modifier = Modifier.fillMaxSize(),
@@ -621,7 +686,7 @@ fun KeyDisplayStep(
                         } ?: "Generating...",
                         modifier = Modifier.padding(12.dp),
                         fontSize = 10.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontFamily = FontFamily.Monospace,
                         color = Color.Gray.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center
                     )
@@ -659,13 +724,13 @@ fun KeyDisplayStep(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "📥",
+                                text = "🔥",
                                 fontSize = 20.sp
                             )
                             Text(
                                 text = "Enter Receiver's Key",
                                 color = Color.White,
-                                fontWeight = FontWeight.Semibold
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -750,13 +815,13 @@ fun DiscoveryStep(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "🔍",
+                                text = "📡",
                                 fontSize = 20.sp
                             )
                             Text(
                                 text = "Start Discovery",
                                 color = Color.White,
-                                fontWeight = FontWeight.Semibold
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
@@ -769,7 +834,7 @@ fun DiscoveryStep(
                     Text(
                         text = "Bluetooth LE Devices",
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Semibold,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color.White
                     )
                     
@@ -793,7 +858,7 @@ fun DiscoveryStep(
                     Text(
                         text = "WiFi Networks",
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Semibold,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color.White
                     )
                     
@@ -839,7 +904,7 @@ fun DiscoveryStep(
                         Text(
                             text = "Next: Key Exchange",
                             color = Color.White,
-                            fontWeight = FontWeight.Semibold
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
@@ -932,7 +997,7 @@ fun KeyExchangeStep(
                                 Text(
                                     text = "Scan QR",
                                     color = Color.White,
-                                    fontWeight = FontWeight.Semibold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
                                 )
                             }
@@ -974,7 +1039,7 @@ fun KeyExchangeStep(
                                 Text(
                                     text = "Enter Key",
                                     color = Color.White,
-                                    fontWeight = FontWeight.Semibold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
                                 )
                             }
@@ -1021,7 +1086,7 @@ fun KeyExchangeStep(
                         Text(
                             text = "Start Secure Chat",
                             color = Color.White,
-                            fontWeight = FontWeight.Semibold
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
@@ -1183,3 +1248,4 @@ fun PeerKeyDialog(
         }
     )
 }
+

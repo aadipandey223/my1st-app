@@ -24,6 +24,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.security.KeyPair
 import java.security.PublicKey
 import java.util.Date
@@ -34,6 +37,19 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     companion object {
         private const val TAG = "SecureChatViewModel"
         private const val DEVICE_ID = 1
+        
+        // Test function for debugging key generation
+        fun testKeyGeneration(context: Context) {
+            val cryptoManager = CryptoManager(context)
+            try {
+                Log.d(TAG, "Testing key generation...")
+                val keyPair = cryptoManager.generateX25519KeyPair()
+                Log.d(TAG, "Test key generation successful: ${keyPair.javaClass.simpleName}")
+                Log.d(TAG, "Public key length: ${keyPair.public.encoded.size} bytes")
+            } catch (e: Exception) {
+                Log.e(TAG, "Test key generation failed", e)
+            }
+        }
     }
     
     // Core components
@@ -69,11 +85,18 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
     
+    // Progress tracking for key generation
+    private val _keyGenerationProgress = MutableStateFlow(0f)
+    val keyGenerationProgress: StateFlow<Float> = _keyGenerationProgress.asStateFlow()
+    
     // Device ID counter
     private val deviceIdCounter = AtomicInteger(DEVICE_ID)
     
     init {
         viewModelScope.launch {
+            // Test key generation on startup for debugging
+            testKeyGeneration(context)
+            
             loadInitialData()
         }
     }
@@ -102,15 +125,50 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     
-    // Generate new X25519 key pair
+    // Reset key generation progress
+    fun resetKeyGeneration() {
+        _keyGenerationProgress.value = 0f
+        _uiState.value = UiState.Initial
+    }
+    
+    // Generate new X25519 key pair with progress tracking
     fun generateKeyPair() {
         viewModelScope.launch {
             try {
+                Log.d(TAG, "Starting key generation process...")
                 _uiState.value = UiState.Loading("Generating key pair...")
+                _keyGenerationProgress.value = 0f
                 
-                // Generate X25519 key pair
-                val keyPair = cryptoManager.generateX25519KeyPair()
+                // Simulate progress steps for better UX
+                Log.d(TAG, "Progress: 10% - Initializing...")
+                _keyGenerationProgress.value = 0.1f
+                delay(100) // Small delay to show progress
+                
+                Log.d(TAG, "Progress: 30% - Preparing key generation...")
+                _keyGenerationProgress.value = 0.3f
+                delay(100)
+                
+                // Generate X25519 key pair on background thread with timeout
+                Log.d(TAG, "Progress: 50% - Generating key pair on background thread...")
+                val keyPair = withTimeout(10000) { // 10 second timeout
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        _keyGenerationProgress.value = 0.5f
+                        delay(200) // Simulate key generation work
+                        
+                        Log.d(TAG, "Calling cryptoManager.generateX25519KeyPair()...")
+                        val result = cryptoManager.generateX25519KeyPair()
+                        Log.d(TAG, "Key pair generated successfully: ${result.javaClass.simpleName}")
+                        _keyGenerationProgress.value = 0.7f
+                        delay(100)
+                        
+                        result
+                    }
+                }
+                
+                Log.d(TAG, "Progress: 80% - Storing key pair...")
                 _publicKey.value = keyPair
+                _keyGenerationProgress.value = 0.8f
+                delay(100)
                 
                 // Store in database
                 val deviceKey = DeviceKey(
@@ -120,17 +178,41 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                     lastUsed = Date()
                 )
                 database.deviceKeyDao().insertDeviceKey(deviceKey)
+                Log.d(TAG, "Key pair stored in database")
+                
+                Log.d(TAG, "Progress: 90% - Generating QR code...")
+                _keyGenerationProgress.value = 0.9f
+                delay(100)
                 
                 // Generate QR code for public key
-                val qrBitmap = qrCodeUtils.generateQRCode(keyPair.public)
+                val qrBitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    Log.d(TAG, "Generating QR code for public key...")
+                    qrCodeUtils.generateQRCode(keyPair.public)
+                }
                 _qrCodeBitmap.value = qrBitmap
+                Log.d(TAG, "QR code generated successfully")
+                
+                Log.d(TAG, "Progress: 100% - Key generation complete!")
+                _keyGenerationProgress.value = 1.0f
+                delay(200) // Show 100% briefly
                 
                 _uiState.value = UiState.KeyGenerated
-                Log.d(TAG, "Key pair generated successfully")
+                Log.d(TAG, "Key pair generated successfully - UI state updated to KeyGenerated")
                 
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.e(TAG, "Key generation timed out after 10 seconds", e)
+                _uiState.value = UiState.Error("Key generation timed out. Please try again.")
+                _keyGenerationProgress.value = 0f
+                _publicKey.value = null
+                _qrCodeBitmap.value = null
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to generate key pair", e)
                 _uiState.value = UiState.Error("Failed to generate key pair: ${e.message}")
+                _keyGenerationProgress.value = 0f
+                
+                // Reset state on error
+                _publicKey.value = null
+                _qrCodeBitmap.value = null
             }
         }
     }
