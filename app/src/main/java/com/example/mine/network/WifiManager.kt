@@ -52,10 +52,7 @@ class WifiManager(private val context: Context) {
             return
         }
         
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.e(TAG, "ACCESS_FINE_LOCATION permission not granted")
-            return
-        }
+        // No location permission required for basic WiFi scanning
         
         val success = wifiManager.startScan()
         if (success) {
@@ -68,24 +65,23 @@ class WifiManager(private val context: Context) {
     
     // Process scan results to find fusion networks
     private fun processScanResults() {
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
+        // No location permission required for basic WiFi scanning
         
         val scanResults = wifiManager.scanResults
         val fusionNetworks = mutableListOf<FusionWifiNetwork>()
         
         for (result in scanResults) {
-            if (isFusionNetwork(result)) {
-                val fusionNetwork = FusionWifiNetwork(
-                    ssid = result.SSID,
-                    bssid = result.BSSID,
-                    rssi = result.level,
-                    capabilities = result.capabilities,
-                    frequency = result.frequency
-                )
-                fusionNetworks.add(fusionNetwork)
-            }
+            // Show all networks, not just fusion networks
+            val fusionNetwork = FusionWifiNetwork(
+                ssid = result.SSID,
+                bssid = result.BSSID,
+                rssi = result.level,
+                capabilities = result.capabilities,
+                frequency = result.frequency,
+                securityType = getSecurityType(result.capabilities),
+                channel = getChannelFromFrequency(result.frequency)
+            )
+            fusionNetworks.add(fusionNetwork)
         }
         
         _discoveredNetworks.value = fusionNetworks
@@ -244,15 +240,33 @@ class WifiManager(private val context: Context) {
     
     // Get discovered networks
     fun getDiscoveredNetworks(): List<FusionWifiNetwork> = _discoveredNetworks.value
+    
+    // Helper function to determine security type from capabilities
+    private fun getSecurityType(capabilities: String): String {
+        return when {
+            capabilities.contains("WPA3") -> "WPA3"
+            capabilities.contains("WPA2") -> "WPA2"
+            capabilities.contains("WPA") -> "WPA"
+            capabilities.contains("WEP") -> "WEP"
+            else -> "Open"
+        }
+    }
+    
+    // Helper function to get channel from frequency
+    private fun getChannelFromFrequency(frequency: Int): Int {
+        return when {
+            frequency >= 2412 && frequency <= 2484 -> {
+                // 2.4 GHz channels
+                (frequency - 2412) / 5 + 1
+            }
+            frequency >= 5170 && frequency <= 5825 -> {
+                // 5 GHz channels
+                (frequency - 5170) / 5 + 34
+            }
+            else -> 0
+        }
+    }
 }
-
-data class FusionWifiNetwork(
-    val ssid: String,
-    val bssid: String,
-    val rssi: Int,
-    val capabilities: String,
-    val frequency: Int
-)
 
 sealed class WifiConnectionStatus {
     object Disconnected : WifiConnectionStatus()

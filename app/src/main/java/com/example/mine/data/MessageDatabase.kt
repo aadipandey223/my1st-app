@@ -180,6 +180,9 @@ class Converters {
 // DAOs (Data Access Objects)
 @Dao
 interface MessageDao {
+    @Query("SELECT * FROM messages ORDER BY timestamp DESC")
+    suspend fun getAllMessages(): List<Message>
+    
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId ORDER BY timestamp DESC")
     suspend fun getMessagesBySession(sessionId: Int): List<Message>
     

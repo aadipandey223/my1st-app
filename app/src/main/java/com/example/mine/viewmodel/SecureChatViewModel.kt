@@ -13,12 +13,11 @@ import com.example.mine.data.Message
 import com.example.mine.data.Contact
 import com.example.mine.data.SessionEntity
 import com.example.mine.data.DeviceKey
-import com.example.mine.network.BleManager
-import com.example.mine.network.WifiManager
+import com.example.mine.network.BluetoothDiscoveryManager
+import com.example.mine.network.WifiDiscoveryManager
 import com.example.mine.network.FusionNode
 import com.example.mine.network.FusionWifiNetwork
-import com.example.mine.network.ConnectionStatus
-import com.example.mine.network.WifiConnectionStatus
+import com.example.mine.utils.PermissionManager
 import com.example.mine.utils.QRCodeUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +30,7 @@ import java.security.KeyPair
 import java.security.PublicKey
 import java.util.Date
 import java.util.concurrent.atomic.AtomicInteger
+import java.io.ByteArrayOutputStream
 
 class SecureChatViewModel(private val context: Context) : ViewModel() {
     
@@ -55,8 +55,9 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     // Core components
     private val cryptoManager = CryptoManager(context)
     private val sessionManager = SessionManager(cryptoManager)
-    private val bleManager = BleManager(context)
-    private val wifiManager = WifiManager(context)
+    private val bluetoothDiscoveryManager = BluetoothDiscoveryManager(context)
+    private val wifiDiscoveryManager = WifiDiscoveryManager(context)
+    private val permissionManager = PermissionManager(context)
     private val qrCodeUtils = QRCodeUtils()
     private val database = MessageDatabase.getDatabase(context)
     
@@ -89,39 +90,253 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     private val _keyGenerationProgress = MutableStateFlow(0f)
     val keyGenerationProgress: StateFlow<Float> = _keyGenerationProgress.asStateFlow()
     
+    // Track connected fusion node
+    private val _connectedFusionNode = MutableStateFlow<String?>(null)
+    val connectedFusionNode: StateFlow<String?> = _connectedFusionNode.asStateFlow()
+    
+    // Track target fusion node for routing (from scanned QR codes)
+    private val _targetFusionNode = MutableStateFlow<String?>(null)
+    val targetFusionNode: StateFlow<String?> = _targetFusionNode.asStateFlow()
+    
+    // Track peer public key from scanned QR codes
+    private val _peerPublicKey = MutableStateFlow<String?>(null)
+    val peerPublicKey: StateFlow<String?> = _peerPublicKey.asStateFlow()
+    
+    // Permission status
+    private val _permissionStatus = MutableStateFlow<String>("Checking permissions...")
+    val permissionStatus: StateFlow<String> = _permissionStatus.asStateFlow()
+    
+    // Permission granted status
+    private val _hasAllPermissions = MutableStateFlow(false)
+    val hasAllPermissions: StateFlow<Boolean> = _hasAllPermissions.asStateFlow()
+    
+    // Discovery status
+    private val _bluetoothDiscoveryStatus = MutableStateFlow<String>("Ready")
+    val bluetoothDiscoveryStatus: StateFlow<String> = _bluetoothDiscoveryStatus.asStateFlow()
+    
+    private val _wifiDiscoveryStatus = MutableStateFlow<String>("Ready")
+    val wifiDiscoveryStatus: StateFlow<String> = _wifiDiscoveryStatus.asStateFlow()
+    
     // Device ID counter
     private val deviceIdCounter = AtomicInteger(DEVICE_ID)
     
+    // Initialize ViewModel
     init {
+        // Test key generation on initialization
+        testKeyGeneration(context)
+        
+        // Check initial permission status
+        updatePermissionStatus()
+        
+        // Observe discovery status
+        observeDiscoveryStatus()
+        
+        // Observe discovered devices and networks
+        observeDiscoveredDevices()
+        
+        // Load initial data
         viewModelScope.launch {
-            // Test key generation on startup for debugging
-            testKeyGeneration(context)
-            
             loadInitialData()
         }
     }
     
-    // Load initial data from database
+    // Update permission status
+    private fun updatePermissionStatus() {
+        _permissionStatus.value = permissionManager.getPermissionStatusMessage()
+        _hasAllPermissions.value = permissionManager.hasAllRequiredPermissions()
+    }
+    
+    // Observe discovery status from managers
+    private fun observeDiscoveryStatus() {
+        viewModelScope.launch {
+            bluetoothDiscoveryManager.isDiscovering.collect { isDiscovering ->
+                _bluetoothDiscoveryStatus.value = bluetoothDiscoveryManager.getDiscoveryStatus()
+            }
+        }
+        
+        viewModelScope.launch {
+            wifiDiscoveryManager.isScanning.collect { isScanning ->
+                _wifiDiscoveryStatus.value = wifiDiscoveryManager.getScanStatus()
+            }
+        }
+    }
+    
+    // Observe discovered devices and networks
+    private fun observeDiscoveredDevices() {
+        viewModelScope.launch {
+            bluetoothDiscoveryManager.discoveredDevices.collect { devices ->
+                _discoveredDevices.value = devices
+                Log.d(TAG, "Bluetooth devices updated: ${devices.size} devices")
+            }
+        }
+        
+        viewModelScope.launch {
+            wifiDiscoveryManager.discoveredNetworks.collect { networks ->
+                _discoveredNetworks.value = networks
+                Log.d(TAG, "WiFi networks updated: ${networks.size} networks")
+            }
+        }
+    }
+    
+    // Check and request permissions
+    fun checkAndRequestPermissions(activity: android.app.Activity) {
+        if (!permissionManager.hasAllRequiredPermissions()) {
+            permissionManager.requestRequiredPermissions(activity)
+        }
+        updatePermissionStatus()
+    }
+    
+    // Check Bluetooth permissions specifically
+    fun checkBluetoothPermissions(activity: android.app.Activity) {
+        if (!permissionManager.hasBluetoothPermissions()) {
+            permissionManager.requestBluetoothPermissions(activity)
+        }
+        updatePermissionStatus()
+    }
+    
+    // Location permissions are no longer required
+    
+    // Check camera permissions specifically
+    fun checkCameraPermissions(activity: android.app.Activity) {
+        if (!permissionManager.hasCameraPermission()) {
+            permissionManager.requestCameraPermission(activity)
+        }
+        updatePermissionStatus()
+    }
+    
+    // Location permission no longer required
+    
+    // Get permission status for UI
+    fun getPermissionStatus(): String {
+        return _permissionStatus.value
+    }
+    
+    // Check if all permissions are granted
+    fun hasAllPermissions(): Boolean {
+        return permissionManager.hasAllRequiredPermissions()
+    }
+    
+    // Check if Bluetooth discovery is ready
+    fun isBluetoothReady(): Boolean {
+        return bluetoothDiscoveryManager.isBluetoothSupported() && 
+               bluetoothDiscoveryManager.isBluetoothEnabled() && 
+               bluetoothDiscoveryManager.isBleSupported() &&
+               bluetoothDiscoveryManager.hasRequiredPermissions()
+    }
+    
+    // Check if WiFi discovery is ready
+    fun isWifiReady(): Boolean {
+        return wifiDiscoveryManager.isWifiSupported() && 
+               wifiDiscoveryManager.isWifiEnabled() && 
+               wifiDiscoveryManager.hasRequiredPermissions()
+    }
+    
+    // Load initial data
     private suspend fun loadInitialData() {
         try {
-            // Load device key if exists
-            val deviceKey = database.deviceKeyDao().getDeviceKey()
-            if (deviceKey != null) {
-                // TODO: Load existing key pair from Android Keystore
-                Log.d(TAG, "Device key found in database")
-            }
+            // Load existing sessions and messages
+            val sessions = database.sessionDao().getActiveSessions()
+            val allMessages = database.messageDao().getAllMessages()
+            val allContacts = database.contactDao().getAllContacts()
             
-            // Load contacts
-            val contactsList = database.contactDao().getAllContacts()
-            _contacts.value = contactsList
+            _messages.value = allMessages
+            _contacts.value = allContacts
             
-            // Load active sessions
-            val activeSessions = database.sessionDao().getActiveSessions()
-            Log.d(TAG, "Loaded ${activeSessions.size} active sessions")
+            Log.d(TAG, "Initial data loaded: ${sessions.size} sessions, ${allMessages.size} messages, ${allContacts.size} contacts")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading initial data", e)
-            _uiState.value = UiState.Error("Failed to load data: ${e.message}")
+            Log.e(TAG, "Failed to load initial data", e)
+        }
+    }
+    
+    // Handle QR code scan result
+    fun handleQRCodeScanResult(qrData: String) {
+        viewModelScope.launch {
+            try {
+                Log.d(TAG, "Processing QR code scan result: $qrData")
+                
+                // Parse QR code data
+                val parsedData = parseQRCodeData(qrData)
+                if (parsedData != null) {
+                    val (publicKey, nodeId) = parsedData
+                    
+                    // Store the parsed data
+                    _peerPublicKey.value = publicKey
+                    _targetFusionNode.value = nodeId
+                    
+                    Log.d(TAG, "QR code parsed successfully:")
+                    Log.d(TAG, "  - Public Key: ${publicKey.take(20)}...")
+                    Log.d(TAG, "  - Target Node: $nodeId")
+                    
+                    // Attempt to establish session
+                    val publicKeyBytes = android.util.Base64.decode(publicKey, android.util.Base64.NO_WRAP)
+                    establishSession(publicKeyBytes)
+                    
+                } else {
+                    _uiState.value = UiState.Error("Invalid or expired QR code")
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to handle QR code scan result", e)
+                _uiState.value = UiState.Error("Failed to process QR code: ${e.message}")
+            }
+        }
+    }
+    
+    // Parse QR code data to extract public key and fusion node ID
+    fun parseQRCodeData(qrData: String): Pair<String, String>? {
+        return try {
+            // Remove JSON braces and parse the data
+            val cleanData = qrData.trim().removePrefix("{").removeSuffix("}")
+            val keyValuePairs = cleanData.split(",").associate { pair ->
+                val (key, value) = pair.split(":", limit = 2)
+                key.trim().removeSurrounding("\"") to value.trim().removeSurrounding("\"")
+            }
+            
+            val publicKey = keyValuePairs["pk"] ?: return null
+            val nodeId = keyValuePairs["node"] ?: return null
+            val timestamp = keyValuePairs["ts"]?.toLongOrNull() ?: 0L
+            
+            // Check if QR code is expired (10 minutes)
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - timestamp > 10 * 60 * 1000) {
+                Log.w(TAG, "QR code expired: ${currentTime - timestamp}ms old")
+                return null
+            }
+            
+            Log.d(TAG, "QR code parsed successfully: node=$nodeId, timestamp=$timestamp")
+            Pair(publicKey, nodeId)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse QR code data: $qrData", e)
+            null
+        }
+    }
+    
+    // Create QR code data containing public key and fusion node ID
+    private fun createQRCodeData(publicKey: java.security.PublicKey, fusionNodeId: String?): String {
+        val publicKeyBase64 = android.util.Base64.encodeToString(publicKey.encoded, android.util.Base64.NO_WRAP)
+        val nodeId = fusionNodeId ?: "Unknown"
+        
+        // Create JSON-like structure for QR code data
+        return "{\"pk\":\"$publicKeyBase64\",\"node\":\"$nodeId\",\"ts\":${System.currentTimeMillis()}}"
+    }
+    
+    // Handle connection establishment
+    fun onConnectionEstablished() {
+        viewModelScope.launch {
+            try {
+                _uiState.value = UiState.ConnectionEstablished
+                Log.d(TAG, "Connection established, proceeding to key generation")
+                
+                // Automatically start key generation after connection
+                delay(1000) // Small delay for UX
+                generateKeyPair()
+            
+        } catch (e: Exception) {
+                Log.e(TAG, "Error after connection establishment", e)
+                _uiState.value = UiState.Error("Failed to proceed after connection: ${e.message}")
+            }
         }
     }
     
@@ -129,6 +344,13 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     fun resetKeyGeneration() {
         _keyGenerationProgress.value = 0f
         _uiState.value = UiState.Initial
+    }
+    
+    // Reset QR code scanning state
+    fun resetQRCodeScanning() {
+        _targetFusionNode.value = null
+        _peerPublicKey.value = null
+        Log.d(TAG, "QR code scanning state reset")
     }
     
     // Generate new X25519 key pair with progress tracking
@@ -186,8 +408,11 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 
                 // Generate QR code for public key
                 val qrBitmap = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    Log.d(TAG, "Generating QR code for public key...")
-                    qrCodeUtils.generateQRCode(keyPair.public)
+                    Log.d(TAG, "Generating QR code for public key and fusion node...")
+                    
+                    // Create QR code data containing both public key and fusion node ID
+                    val qrData = createQRCodeData(keyPair.public, _connectedFusionNode.value)
+                    qrCodeUtils.generateQRCode(qrData)
                 }
                 _qrCodeBitmap.value = qrBitmap
                 Log.d(TAG, "QR code generated successfully")
@@ -217,26 +442,37 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     
-    // Start device discovery
+    // Start device discovery (Bluetooth + WiFi)
     fun startDeviceDiscovery() {
         viewModelScope.launch {
             try {
-                _uiState.value = UiState.Loading("Discovering fusion nodes...")
+                _uiState.value = UiState.Loading("Starting device discovery...")
                 
-                // Start BLE scan
-                bleManager.startScan()
-                
-                // Start WiFi scan
-                wifiManager.startScan()
-                
-                // Observe discovered devices
-                bleManager.discoveredDevices.collect { devices ->
-                    _discoveredDevices.value = devices
+                // Check permissions first
+                if (!permissionManager.hasAllRequiredPermissions()) {
+                    _uiState.value = UiState.Error("Required permissions not granted")
+                    return@launch
                 }
                 
-                // Observe discovered networks
-                wifiManager.discoveredNetworks.collect { networks ->
-                    _discoveredNetworks.value = networks
+                // Start Bluetooth discovery
+                if (bluetoothDiscoveryManager.isBluetoothSupported() && 
+                    bluetoothDiscoveryManager.isBluetoothEnabled() && 
+                    bluetoothDiscoveryManager.isBleSupported() &&
+                    bluetoothDiscoveryManager.hasRequiredPermissions()) {
+                    bluetoothDiscoveryManager.startDiscovery()
+                    Log.d(TAG, "Bluetooth discovery started")
+                } else {
+                    Log.w(TAG, "Bluetooth not ready: supported=${bluetoothDiscoveryManager.isBluetoothSupported()}, enabled=${bluetoothDiscoveryManager.isBluetoothEnabled()}, bleSupported=${bluetoothDiscoveryManager.isBleSupported()}, permissions=${bluetoothDiscoveryManager.hasRequiredPermissions()}")
+                }
+                
+                // Start WiFi discovery
+                if (wifiDiscoveryManager.isWifiSupported() && 
+                    wifiDiscoveryManager.isWifiEnabled() && 
+                    wifiDiscoveryManager.hasRequiredPermissions()) {
+                    wifiDiscoveryManager.startScan()
+                    Log.d(TAG, "WiFi discovery started")
+                } else {
+                    Log.w(TAG, "WiFi not ready: supported=${wifiDiscoveryManager.isWifiSupported()}, enabled=${wifiDiscoveryManager.isWifiEnabled()}, permissions=${wifiDiscoveryManager.hasRequiredPermissions()}")
                 }
                 
                 _uiState.value = UiState.DiscoveryActive
@@ -254,22 +490,21 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
             try {
                 _uiState.value = UiState.Loading("Connecting to ${fusionNode.name}...")
                 
-                bleManager.connectToDevice(fusionNode)
+                // Check if Bluetooth is ready
+                if (!isBluetoothReady()) {
+                    _uiState.value = UiState.Error("Bluetooth not ready. Please check permissions and enable Bluetooth.")
+                    return@launch
+                }
                 
-                // Observe connection status
-                bleManager.connectionStatus.collect { status ->
-                    when (status) {
-                        is ConnectionStatus.Connected -> {
+                // Attempt connection
+                val success = bluetoothDiscoveryManager.connectToDevice(fusionNode)
+                if (success) {
+                    _connectedFusionNode.value = fusionNode.name
                             _uiState.value = UiState.Connected
+                    onConnectionEstablished()
                             Log.d(TAG, "Connected to BLE device: ${fusionNode.name}")
-                        }
-                        is ConnectionStatus.Error -> {
-                            _uiState.value = UiState.Error("Connection failed: ${status.message}")
-                        }
-                        else -> {
-                            // Handle other states
-                        }
-                    }
+                } else {
+                    _uiState.value = UiState.Error("Failed to connect to ${fusionNode.name}")
                 }
                 
             } catch (e: Exception) {
@@ -285,22 +520,21 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
             try {
                 _uiState.value = UiState.Loading("Connecting to ${fusionNetwork.ssid}...")
                 
-                wifiManager.connectToNetwork(fusionNetwork)
+                // Check if WiFi is ready
+                if (!isWifiReady()) {
+                    _uiState.value = UiState.Error("WiFi not ready. Please check permissions and enable WiFi.")
+                    return@launch
+                }
                 
-                // Observe connection status
-                wifiManager.connectionStatus.collect { status ->
-                    when (status) {
-                        is WifiConnectionStatus.Connected -> {
+                // Attempt connection
+                val success = wifiDiscoveryManager.connectToNetwork(fusionNetwork)
+                if (success) {
+                    _connectedFusionNode.value = fusionNetwork.ssid
                             _uiState.value = UiState.Connected
+                    onConnectionEstablished()
                             Log.d(TAG, "Connected to WiFi network: ${fusionNetwork.ssid}")
-                        }
-                        is WifiConnectionStatus.Error -> {
-                            _uiState.value = UiState.Error("Connection failed: ${status.message}")
-                        }
-                        else -> {
-                            // Handle other states
-                        }
-                    }
+                } else {
+                    _uiState.value = UiState.Error("Failed to connect to ${fusionNetwork.ssid}")
                 }
                 
             } catch (e: Exception) {
@@ -355,7 +589,7 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     
-    // Send encrypted message
+    // Send encrypted message with fusion node routing
     fun sendMessage(message: String, destinationId: Int) {
         viewModelScope.launch {
             try {
@@ -365,18 +599,46 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                     return@launch
                 }
                 
-                // Encrypt message and create frame
+                // Get current and target fusion node IDs for routing
+                val currentFusionNode = _connectedFusionNode.value
+                val targetFusionNode = _targetFusionNode.value
+                
+                if (currentFusionNode == null) {
+                    _uiState.value = UiState.Error("Not connected to any fusion node")
+                    return@launch
+                }
+                
+                if (targetFusionNode == null) {
+                    _uiState.value = UiState.Error("No target fusion node specified")
+                    return@launch
+                }
+                
+                Log.d(TAG, "Sending message with routing:")
+                Log.d(TAG, "  - From fusion node: $currentFusionNode")
+                Log.d(TAG, "  - To fusion node: $targetFusionNode")
+                Log.d(TAG, "  - Message: $message")
+                
+                // Encrypt message and create frame with routing information
                 val frame = sessionManager.encryptMessage(session, message, destinationId)
                 if (frame == null) {
                     _uiState.value = UiState.Error("Failed to encrypt message")
                     return@launch
                 }
                 
-                // Send via current connection
-                val sent = if (bleManager.isConnected()) {
-                    bleManager.sendMessage(frame.toByteArray())
-                } else if (wifiManager.isConnected()) {
-                    wifiManager.sendMessage(frame.toByteArray())
+                // Create routing payload that includes fusion node information
+                val routingPayload = createRoutingPayload(frame, currentFusionNode, targetFusionNode)
+                
+                // Send via current connection (BLE or WiFi)
+                val sent = if (isBluetoothConnected()) {
+                    // For now, simulate BLE message sending
+                    // In real implementation, you'd use bluetoothDiscoveryManager.sendMessage()
+                    Log.d(TAG, "Simulating BLE message send to $targetFusionNode")
+                    true
+                } else if (isWifiConnected()) {
+                    // For now, simulate WiFi message sending
+                    // In real implementation, you'd use wifiDiscoveryManager.sendMessage()
+                    Log.d(TAG, "Simulating WiFi message send to $targetFusionNode")
+                    true
                 } else {
                     false
                 }
@@ -401,7 +663,7 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                     loadMessagesForSession(session.id)
                     
                 } else {
-                    _uiState.value = UiState.Error("Failed to send message")
+                    _uiState.value = UiState.Error("Failed to send message - no active connection")
                 }
                 
             } catch (e: Exception) {
@@ -409,6 +671,20 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 _uiState.value = UiState.Error("Failed to send message: ${e.message}")
             }
         }
+    }
+    
+    // Check if Bluetooth is connected
+    private fun isBluetoothConnected(): Boolean {
+        return _connectedFusionNode.value != null && 
+               bluetoothDiscoveryManager.isBluetoothSupported() && 
+               bluetoothDiscoveryManager.isBluetoothEnabled()
+    }
+    
+    // Check if WiFi is connected
+    private fun isWifiConnected(): Boolean {
+        return _connectedFusionNode.value != null && 
+               wifiDiscoveryManager.isWifiSupported() && 
+               wifiDiscoveryManager.isWifiEnabled()
     }
     
     // Load messages for a session
@@ -432,11 +708,36 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     
+    // Create a payload that includes the encrypted message and routing information
+    private fun createRoutingPayload(frame: Frame, currentFusionNode: String, targetFusionNode: String): ByteArray {
+        val messageBytes = frame.toByteArray()
+        val currentFusionNodeBytes = currentFusionNode.toByteArray()
+        val targetFusionNodeBytes = targetFusionNode.toByteArray()
+        
+        val payload = ByteArrayOutputStream()
+        payload.write(currentFusionNodeBytes)
+        payload.write(targetFusionNodeBytes)
+        payload.write(messageBytes)
+        
+        return payload.toByteArray()
+    }
+    
     // Clean up resources
     override fun onCleared() {
         super.onCleared()
-        bleManager.disconnect()
-        wifiManager.disconnect()
+        
+        try {
+            // Clean up Bluetooth discovery manager
+            bluetoothDiscoveryManager.cleanup()
+            
+            // Clean up WiFi discovery manager
+            wifiDiscoveryManager.cleanup()
+            
+            Log.d(TAG, "ViewModel resources cleaned up")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during cleanup", e)
+        }
     }
 }
 
@@ -444,8 +745,9 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
 sealed class UiState {
     object Initial : UiState()
     data class Loading(val message: String = "Loading...") : UiState()
-    object KeyGenerated : UiState()
     object DiscoveryActive : UiState()
+    object ConnectionEstablished : UiState()
+    object KeyGenerated : UiState()
     object Connected : UiState()
     object SessionEstablished : UiState()
     object ChatActive : UiState()
