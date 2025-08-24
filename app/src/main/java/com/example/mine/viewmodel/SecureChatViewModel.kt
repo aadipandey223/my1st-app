@@ -17,6 +17,8 @@ import com.example.mine.network.BluetoothDiscoveryManager
 import com.example.mine.network.WifiDiscoveryManager
 import com.example.mine.network.FusionNode
 import com.example.mine.network.FusionWifiNetwork
+import com.example.mine.network.WifiConnectionHistory
+import com.example.mine.network.WifiUsageStatistics
 import com.example.mine.utils.PermissionManager
 import com.example.mine.utils.QRCodeUtils
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -116,6 +118,13 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     
     private val _wifiDiscoveryStatus = MutableStateFlow<String>("Ready")
     val wifiDiscoveryStatus: StateFlow<String> = _wifiDiscoveryStatus.asStateFlow()
+    
+    // WiFi history state
+    private val _wifiHistory = MutableStateFlow<List<WifiConnectionHistory>>(emptyList())
+    val wifiHistory: StateFlow<List<WifiConnectionHistory>> = _wifiHistory.asStateFlow()
+    
+    private val _wifiUsageStatistics = MutableStateFlow<WifiUsageStatistics?>(null)
+    val wifiUsageStatistics: StateFlow<WifiUsageStatistics?> = _wifiUsageStatistics.asStateFlow()
     
     // Device ID counter
     private val deviceIdCounter = AtomicInteger(DEVICE_ID)
@@ -242,11 +251,87 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
             _messages.value = allMessages
             _contacts.value = allContacts
             
+            // Load WiFi history
+            loadWifiHistory()
+            
             Log.d(TAG, "Initial data loaded: ${sessions.size} sessions, ${allMessages.size} messages, ${allContacts.size} contacts")
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load initial data", e)
         }
+    }
+    
+    // Load WiFi connection history
+    fun loadWifiHistory() {
+        viewModelScope.launch {
+            try {
+                val history = wifiDiscoveryManager.getWifiConnectionHistory()
+                _wifiHistory.value = history
+                
+                val statistics = wifiDiscoveryManager.getWifiUsageStatistics()
+                _wifiUsageStatistics.value = statistics
+                
+                Log.d(TAG, "WiFi history loaded: ${history.size} networks")
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load WiFi history", e)
+            }
+        }
+    }
+    
+    // Get recently connected networks
+    fun getRecentlyConnectedNetworks(): List<WifiConnectionHistory> {
+        return wifiDiscoveryManager.getRecentlyConnectedNetworks()
+    }
+    
+    // Get most frequent networks
+    fun getMostFrequentNetworks(): List<WifiConnectionHistory> {
+        return wifiDiscoveryManager.getMostFrequentNetworks()
+    }
+    
+    // Get potential fusion nodes from history
+    fun getPotentialFusionNodesFromHistory(): List<WifiConnectionHistory> {
+        return wifiDiscoveryManager.getPotentialFusionNodesFromHistory()
+    }
+    
+    // Get networks by location
+    fun getNetworksByLocation(): Map<String, List<WifiConnectionHistory>> {
+        return wifiDiscoveryManager.getNetworksByLocation()
+    }
+    
+    // Get networks by time of day
+    fun getNetworksByTimeOfDay(): Map<String, List<WifiConnectionHistory>> {
+        return wifiDiscoveryManager.getNetworksByTimeOfDay()
+    }
+    
+    // Get networks by signal strength
+    fun getNetworksBySignalStrength(): Map<String, List<WifiConnectionHistory>> {
+        return wifiDiscoveryManager.getNetworksBySignalStrength()
+    }
+    
+    // Get networks with poor signal
+    fun getNetworksWithPoorSignal(): List<WifiConnectionHistory> {
+        return wifiDiscoveryManager.getNetworksWithPoorSignal()
+    }
+    
+    // Get networks with excellent signal
+    fun getNetworksWithExcellentSignal(): List<WifiConnectionHistory> {
+        return wifiDiscoveryManager.getNetworksWithExcellentSignal()
+    }
+    
+    // Check if a network is in history
+    fun isNetworkInHistory(ssid: String): Boolean {
+        return wifiDiscoveryManager.isNetworkInHistory(ssid)
+    }
+    
+    // Get network from history
+    fun getNetworkFromHistory(ssid: String): WifiConnectionHistory? {
+        return wifiDiscoveryManager.getNetworkFromHistory(ssid)
+    }
+    
+    // Get WiFi usage statistics
+    fun getWifiUsageStatistics(): WifiUsageStatistics? {
+        return _wifiUsageStatistics.value
     }
     
     // Handle QR code scan result
@@ -515,7 +600,7 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     }
     
     // Connect to a fusion network via WiFi
-    fun connectToWifiNetwork(fusionNetwork: FusionWifiNetwork) {
+    fun connectToWifiNetwork(fusionNetwork: FusionWifiNetwork, password: String? = null) {
         viewModelScope.launch {
             try {
                 _uiState.value = UiState.Loading("Connecting to ${fusionNetwork.ssid}...")
@@ -527,14 +612,35 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 }
                 
                 // Attempt connection
-                val success = wifiDiscoveryManager.connectToNetwork(fusionNetwork)
+                val success = wifiDiscoveryManager.connectToNetwork(fusionNetwork, password)
                 if (success) {
-                    _connectedFusionNode.value = fusionNetwork.ssid
+                    // Wait for actual connection confirmation
+                    var attempts = 0
+                    val maxAttempts = 30 // Wait up to 30 seconds
+                    
+                    while (attempts < maxAttempts) {
+                        delay(1000) // Wait 1 second between checks
+                        attempts++
+                        
+                        val currentConnection = wifiDiscoveryManager.getCurrentConnection()
+                        if (currentConnection.contains(fusionNetwork.ssid)) {
+                            _connectedFusionNode.value = fusionNetwork.ssid
                             _uiState.value = UiState.Connected
-                    onConnectionEstablished()
-                            Log.d(TAG, "Connected to WiFi network: ${fusionNetwork.ssid}")
+                            onConnectionEstablished()
+                            Log.d(TAG, "Successfully connected to WiFi network: ${fusionNetwork.ssid}")
+                            return@launch
+                        }
+                        
+                        // Update loading message
+                        _uiState.value = UiState.Loading("Connecting to ${fusionNetwork.ssid}... (${attempts}s)")
+                    }
+                    
+                    // If we get here, connection failed
+                    _uiState.value = UiState.Error("Connection timeout. Failed to connect to ${fusionNetwork.ssid}")
+                    Log.e(TAG, "Connection timeout for ${fusionNetwork.ssid}")
+                    
                 } else {
-                    _uiState.value = UiState.Error("Failed to connect to ${fusionNetwork.ssid}")
+                    _uiState.value = UiState.Error("Failed to initiate connection to ${fusionNetwork.ssid}")
                 }
                 
             } catch (e: Exception) {

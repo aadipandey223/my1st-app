@@ -29,12 +29,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mine.viewmodel.SecureChatViewModel
 import com.example.mine.viewmodel.UiState
 import com.example.mine.ui.screens.ChatScreen
+import com.example.mine.network.FusionWifiNetwork
 import kotlinx.coroutines.delay
 import android.util.Log
 
@@ -89,6 +91,9 @@ fun ModernMainScreen() {
     var messageText by remember { mutableStateOf("") }
     var isGeneratingKeys by remember { mutableStateOf(false) }
     var scannedQRData by remember { mutableStateOf<String?>(null) }
+    var selectedWifiNetwork by remember { mutableStateOf<FusionWifiNetwork?>(null) }
+    var showWifiPasswordDialog by remember { mutableStateOf(false) }
+    var wifiPassword by remember { mutableStateOf("") }
     
     // Background gradient
     val backgroundGradient = Brush.radialGradient(
@@ -230,8 +235,24 @@ fun ModernMainScreen() {
                             }
                         },
                         onConnectBle = { device -> viewModel.connectToBleDevice(device) },
-                        onConnectWifi = { network -> viewModel.connectToWifiNetwork(network) },
+                                                onConnectWifi = { network -> 
+                            if (network.securityType != "Open") {
+                                // Check if network is already saved (in history)
+                                if (viewModel.isNetworkInHistory(network.ssid)) {
+                                    // Network is saved, connect directly without password
+                                    viewModel.connectToWifiNetwork(network)
+                                } else {
+                                    // Network is new, show password dialog
+                                    selectedWifiNetwork = network
+                                    showWifiPasswordDialog = true
+                                }
+                            } else {
+                                // Connect directly to open networks
+                                viewModel.connectToWifiNetwork(network)
+                            }
+                        },
                         onNext = { currentStep = AppStep.CONNECTION_ESTABLISHED },
+                        onBack = { currentStep = AppStep.WELCOME },
                         hasAllPermissions = hasAllPermissions
                     )
                     AppStep.CONNECTION_ESTABLISHED -> {
@@ -244,6 +265,24 @@ fun ModernMainScreen() {
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
+                            // Back button
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Start
+                            ) {
+                                IconButton(
+                                    onClick = { currentStep = AppStep.NETWORK_DISCOVERY }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowBack,
+                                        contentDescription = "Back",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -331,12 +370,14 @@ fun ModernMainScreen() {
                         publicKey = publicKey,
                         qrCodeBitmap = qrCodeBitmap,
                         connectedFusionNode = connectedFusionNode,
-                        onNext = { currentStep = AppStep.QR_CODE_SCANNING }
+                        onNext = { currentStep = AppStep.QR_CODE_SCANNING },
+                        onBack = { currentStep = AppStep.CONNECTION_ESTABLISHED }
                     )
                     AppStep.QR_CODE_SCANNING -> KeyExchangeStep(
                         onScanQR = { showQRScanner = true },
                         onEnterKey = { showPeerKeyDialog = true },
                         onNext = { currentStep = AppStep.CHAT },
+                        onBack = { currentStep = AppStep.QR_CODE_DISPLAY },
                         scannedQRData = scannedQRData,
                         targetFusionNode = targetFusionNode,
                         peerPublicKey = peerPublicKey,
@@ -385,6 +426,26 @@ fun ModernMainScreen() {
                 viewModel.handleQRCodeScanResult(qrData)
             }
         )
+    }
+    
+        // WiFi Password Dialog
+    selectedWifiNetwork?.let { network ->
+        if (showWifiPasswordDialog) {
+            WifiPasswordDialog(
+                network = network,
+                onDismiss = { 
+                    showWifiPasswordDialog = false
+                    selectedWifiNetwork = null
+                    wifiPassword = ""
+                },
+                onConfirm = { password ->
+                    viewModel.connectToWifiNetwork(network, password)
+                    showWifiPasswordDialog = false
+                    selectedWifiNetwork = null
+                    wifiPassword = ""
+                }
+            )
+        }
     }
 }
 
@@ -508,7 +569,7 @@ fun WelcomeStep(
                                 )
                                 Text(
                                     text = "Discovering Networks...",
-                                    color = Color.White,
+                    color = Color.White,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -581,8 +642,8 @@ fun WelcomeStep(
                                     fontSize = 16.sp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = permissionStatus,
+                    Text(
+                    text = permissionStatus,
                                     fontSize = 12.sp,
                                     color = if (hasAllPermissions) 
                                         Color(0xFF10B981) // Green
@@ -640,8 +701,8 @@ fun KeyGenerationStep(
                             containerColor = Color(0xFFDC2626).copy(alpha = 0.2f) // red with transparency
                         ),
                         shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(
+        ) {
+            Column(
                             modifier = Modifier.padding(16.dp)
                         ) {
                             Text(
@@ -683,7 +744,7 @@ fun KeyGenerationStep(
                 )
                 
                 Box(
-                    modifier = Modifier
+            modifier = Modifier
                         .size(64.dp)
                         .rotate(iconRotation)
                         .background(
@@ -696,8 +757,8 @@ fun KeyGenerationStep(
                             shape = RoundedCornerShape(32.dp)
                         ),
                     contentAlignment = Alignment.Center
-                ) {
-                    Text(
+            ) {
+                Text(
                         text = if (error != null) "⚠️" else "🔄",
                         fontSize = 24.sp
                     )
@@ -768,7 +829,8 @@ fun KeyDisplayStep(
     publicKey: java.security.KeyPair?,
     qrCodeBitmap: android.graphics.Bitmap?,
     connectedFusionNode: String?,
-    onNext: () -> Unit
+    onNext: () -> Unit,
+    onBack: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -790,7 +852,26 @@ fun KeyDisplayStep(
                 modifier = Modifier.padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
+                // Back button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    IconButton(
+                        onClick = onBack
+                ) {
+                Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                            Text(
                     text = "Your QR Code",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -868,8 +949,8 @@ fun KeyDisplayStep(
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
+                    ) {
+                        Text(
                             text = "🔐 QR Code Contains:",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -904,12 +985,12 @@ fun KeyDisplayStep(
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 // Next button
-                Button(
+                            Button(
                     onClick = onNext,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
-                    colors = ButtonDefaults.buttonColors(
+                                colors = ButtonDefaults.buttonColors(
                         containerColor = Color.Transparent
                     ),
                     shape = RoundedCornerShape(16.dp)
@@ -943,12 +1024,12 @@ fun KeyDisplayStep(
                             )
                         }
                     }
+                            }
+                        }
+                    }
                 }
             }
-        }
-    }
-}
-
+            
 @Composable
 fun DiscoveryStep(
     discoveredDevices: List<com.example.mine.network.FusionNode>,
@@ -959,6 +1040,7 @@ fun DiscoveryStep(
     onConnectBle: (com.example.mine.network.FusionNode) -> Unit,
     onConnectWifi: (com.example.mine.network.FusionWifiNetwork) -> Unit,
     onNext: () -> Unit,
+    onBack: () -> Unit,
     hasAllPermissions: Boolean
 ) {
     var selectedTab by remember { mutableStateOf(0) }
@@ -982,7 +1064,26 @@ fun DiscoveryStep(
             Column(
                 modifier = Modifier.padding(32.dp)
             ) {
-                Text(
+                // Back button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    IconButton(
+                        onClick = onBack
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                
+                    Spacer(modifier = Modifier.height(16.dp))
+                
+                            Text(
                     text = "Discover Fusion Nodes",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
@@ -991,7 +1092,7 @@ fun DiscoveryStep(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                Text(
+                            Text(
                     text = "Find and connect to fusion nodes in your area",
                     fontSize = 16.sp,
                     color = Color.Gray.copy(alpha = 0.8f)
@@ -1027,15 +1128,15 @@ fun DiscoveryStep(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
                                 text = if (hasAllPermissions) "📡" else "🔐",
                                 fontSize = 20.sp
                             )
-                            Text(
+                        Text(
                                 text = if (hasAllPermissions) "Start Discovery" else "Grant Permissions",
                                 color = Color.White,
                                 fontWeight = FontWeight.SemiBold
@@ -1068,7 +1169,7 @@ fun DiscoveryStep(
                         Row(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
+                        Text(
                                 text = "📱",
                                 fontSize = 16.sp
                             )
@@ -1117,8 +1218,8 @@ fun DiscoveryStep(
                             else Color.Transparent
                         ),
                         shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
+) {
+    Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -1126,7 +1227,7 @@ fun DiscoveryStep(
                                 text = "📶",
                                 fontSize = 16.sp
                             )
-                    Text(
+                Text(
                         text = "WiFi Networks",
                                 color = Color.White,
                                 fontSize = 12.sp
@@ -1142,10 +1243,10 @@ fun DiscoveryStep(
                             containerColor = if (selectedTab == 1) 
                                 Color(0xFF3B82F6).copy(alpha = 0.3f) 
                             else Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -1155,7 +1256,7 @@ fun DiscoveryStep(
                             )
                             Text(
                                 text = "Bluetooth",
-                                color = Color.White,
+                    color = Color.White,
                                 fontSize = 12.sp
                             )
                         }
@@ -1233,8 +1334,8 @@ fun DiscoveryStep(
                 if (discoveredDevices.isNotEmpty() || discoveredNetworks.isNotEmpty()) {
                 Button(
                     onClick = onNext,
-                    modifier = Modifier
-                        .fillMaxWidth()
+                        modifier = Modifier
+            .fillMaxWidth()
                         .height(56.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color.Transparent
@@ -1242,7 +1343,7 @@ fun DiscoveryStep(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Box(
-                        modifier = Modifier
+                            modifier = Modifier
                             .fillMaxSize()
                             .background(
                                 brush = Brush.linearGradient(
@@ -1254,10 +1355,10 @@ fun DiscoveryStep(
                                 shape = RoundedCornerShape(16.dp)
                             ),
                         contentAlignment = Alignment.Center
-                    ) {
-                        Text(
+                            ) {
+                                Text(
                                 text = "Continue",
-                            color = Color.White,
+                    color = Color.White,
                             fontWeight = FontWeight.SemiBold
                         )
                         }
@@ -1273,6 +1374,7 @@ fun KeyExchangeStep(
     onScanQR: () -> Unit,
     onEnterKey: () -> Unit,
     onNext: () -> Unit,
+    onBack: () -> Unit,
     scannedQRData: String? = null,
     targetFusionNode: String? = null,
     peerPublicKey: String? = null,
@@ -1284,28 +1386,47 @@ fun KeyExchangeStep(
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
+) {
+    Card(
+                            modifier = Modifier
+            .fillMaxWidth()
                 .shadow(20.dp, RoundedCornerShape(24.dp))
                 .clip(RoundedCornerShape(24.dp)),
-            colors = CardDefaults.cardColors(
+        colors = CardDefaults.cardColors(
                 containerColor = Color.White.copy(alpha = 0.1f)
             )
-        ) {
-            Column(
+                        ) {
+                            Column(
                 modifier = Modifier.padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
+                // Back button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    IconButton(
+                        onClick = onBack
+                            ) {
+            Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+                                Text(
                     text = "Key Exchange",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
-                )
+                                )
                 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(
                     text = "Establish secure connection with peer",
@@ -1314,7 +1435,7 @@ fun KeyExchangeStep(
                     textAlign = TextAlign.Center
                 )
                 
-                Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(32.dp))
                 
                 // Show scanned QR code information if available
                 if (scannedQRData != null && targetFusionNode != null && peerPublicKey != null) {
@@ -1322,9 +1443,9 @@ fun KeyExchangeStep(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
                             containerColor = Color(0xFF059669).copy(alpha = 0.1f) // emerald with transparency
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
                         Column(
                             modifier = Modifier.padding(16.dp)
                         ) {
@@ -1337,7 +1458,7 @@ fun KeyExchangeStep(
                             
                             Spacer(modifier = Modifier.height(12.dp))
                             
-                            Text(
+                        Text(
                                 text = "Target Fusion Node: $targetFusionNode",
                                 fontSize = 14.sp,
                                 color = Color(0xFF10B981) // emerald-500
@@ -1374,16 +1495,16 @@ fun KeyExchangeStep(
                     // Scan QR button
                     Button(
                         onClick = onScanQR,
-                        modifier = Modifier
+        modifier = Modifier
                             .weight(1f)
                             .height(56.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
                         Box(
-                            modifier = Modifier
+            modifier = Modifier
                                 .fillMaxSize()
                                 .background(
                                     brush = Brush.linearGradient(
@@ -1397,15 +1518,15 @@ fun KeyExchangeStep(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
                                     text = "📷",
                                     fontSize = 20.sp
                                 )
                                 Text(
                                     text = "Scan QR",
-                                    color = Color.White,
+                color = Color.White,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
                                 )
@@ -1416,7 +1537,7 @@ fun KeyExchangeStep(
                     // Enter Key button
                     Button(
                         onClick = onEnterKey,
-                        modifier = Modifier
+                    modifier = Modifier
                             .weight(1f)
                             .height(56.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -1441,23 +1562,23 @@ fun KeyExchangeStep(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(
+                Text(
                                     text = "⌨️",
                                     fontSize = 20.sp
                                 )
                                 Text(
                                     text = "Enter Key",
-                                    color = Color.White,
+                color = Color.White,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp
-                                )
+            )
                             }
                         }
                     }
                 }
-                
+            
                 Spacer(modifier = Modifier.height(16.dp))
-                
+            
                 Text(
                     text = "Scan a QR code or manually enter the peer's public key to establish a secure session",
                     fontSize = 14.sp,
@@ -1467,14 +1588,14 @@ fun KeyExchangeStep(
                 
                 // Only show next button if QR code is scanned and processed
                 if (scannedQRData != null && targetFusionNode != null && peerPublicKey != null) {
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                Button(
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Button(
                     onClick = onNext,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
-                    colors = ButtonDefaults.buttonColors(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(
                         containerColor = Color.Transparent
                     ),
                     shape = RoundedCornerShape(16.dp)
@@ -1493,15 +1614,15 @@ fun KeyExchangeStep(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
+                    Text(
                             text = "Start Secure Chat",
-                            color = Color.White,
+                    color = Color.White,
                             fontWeight = FontWeight.SemiBold
-                        )
+                    )
                         }
                     }
                 }
-            }
+                }
         }
     }
 }
@@ -1521,9 +1642,9 @@ fun DeviceItem(
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
         ) {
             Row(
             verticalAlignment = Alignment.CenterVertically
@@ -1849,6 +1970,68 @@ fun QRCodeScannerDialog(
                 }
             ) {
                 Text("Scan")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun WifiPasswordDialog(
+    network: FusionWifiNetwork,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Connect to ${network.ssid}")
+        },
+        text = {
+            Column {
+                Text(
+                    text = "This network requires a password",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Security: ${network.securityType}",
+                    fontSize = 12.sp,
+                    color = Color.Gray.copy(alpha = 0.7f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { 
+                    if (password.isNotEmpty()) {
+                        onConfirm(password)
+                    }
+                }
+            ) {
+                Text("Connect")
             }
         },
         dismissButton = {

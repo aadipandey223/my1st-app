@@ -1,0 +1,49 @@
+Android WiFi Manager API:
+1. Use Phone's Native WiFi System:
+kotlin// Get the same WiFi Manager that Settings app uses
+val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+// This will actually connect your phone to WiFi (same as Settings)
+fun connectToWifi(ssid: String, password: String) {
+    val wifiNetworkSpecifier = WifiNetworkSpecifier.Builder()
+        .setSsid(ssid)
+        .setWpa2Passphrase(password)
+        .build()
+
+    val networkRequest = NetworkRequest.Builder()
+        .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+        .setNetworkSpecifier(wifiNetworkSpecifier)
+        .build()
+
+    val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    
+    connectivityManager.requestNetwork(networkRequest, object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            // Phone is now connected to WiFi!
+            Log.d("WiFi", "Connected successfully!")
+        }
+        
+        override fun onUnavailable() {
+            // Connection failed
+            Log.d("WiFi", "Connection failed!")
+        }
+    })
+}
+2. Check Connection Status (like Settings app):
+kotlinfun isConnectedToWifi(ssid: String): Boolean {
+    val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+    val wifiInfo = wifiManager.connectionInfo
+    return wifiInfo.ssid.contains(ssid)
+}
+3. Disconnect WiFi (like Settings app):
+kotlinfun disconnectWifi() {
+    val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    // This will disconnect current WiFi connection
+    connectivityManager.bindProcessToNetwork(null)
+}
+Required Permissions:
+xml<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+This is exactly what your phone's WiFi Settings uses! When you connect through your app, your phone will actually connect to that network system-wide.
