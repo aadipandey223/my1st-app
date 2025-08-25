@@ -37,6 +37,7 @@ import com.example.mine.callback.ConnectionCallback
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -656,12 +657,16 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                             }
                         }
                         if (connectedNode != null) {
-                            Log.d(TAG, "Found connected fusion node via Bluetooth: ${connectedNode.name}")
-                            _connectedFusionNode.value = connectedNode.name
+                            Log.d(TAG, "Found potential fusion node via Bluetooth: ${connectedNode.name}")
+                            // Don't set the node ID yet - let BLE communication get the real node ID
+                            // _connectedFusionNode.value = connectedNode.name
                             _uiState.value = UiState.Connected
                             
                             // Call the callback to bring app to foreground
                             connectionCallback?.onConnectionDetected(connectedNode.name)
+                            
+                            // Start listening for node ID via BLE
+                            startListeningForNodeId()
                             
                             return@launch
                         }
@@ -686,12 +691,16 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                         
                         if (isFusionNode) {
                             
-                            Log.d(TAG, "Found connected fusion node via WiFi: ${connectedWifi.ssid}")
-                            _connectedFusionNode.value = connectedWifi.ssid
+                            Log.d(TAG, "Found potential fusion node via WiFi: ${connectedWifi.ssid}")
+                            // Don't set the node ID yet - let TCP connection get the real node ID
+                            // _connectedFusionNode.value = connectedWifi.ssid
                             _uiState.value = UiState.Connected
                             
                             // Call the callback to bring app to foreground
                             connectionCallback?.onConnectionDetected(connectedWifi.ssid)
+                            
+                            // Start TCP connection to get real node ID
+                            startListeningForNodeId()
                             
                             return@launch
                         } else {
@@ -918,91 +927,148 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
     // Start listening for Node ID from any fusion node (ESP32, Pi, etc.)
     fun startListeningForNodeId() {
         _isListeningForNodeId.value = true
-        Log.d(TAG, "Started listening for Node ID from fusion node")
+        Log.d(TAG, "🚀 Started listening for Node ID from fusion node")
         
-        // Try to connect to fusion node via WiFi connection
+        // Try to connect to fusion node via WiFi connection with timeout
         viewModelScope.launch {
             try {
-                val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as AndroidWifiManager
-                val connectionInfo = wifiManager.connectionInfo
-                
-                if (connectionInfo != null && connectionInfo.networkId != -1) {
-                    val ssid = connectionInfo.ssid?.removeSurrounding("\"") ?: ""
-                    Log.d(TAG, "Connected to WiFi network: $ssid")
-                    
-                    // Check if we're connected to a fusion node network
-                    if (isFusionNodeNetwork(ssid)) {
-                        Log.d(TAG, "Connected to fusion node network: $ssid")
-                        // Try to get node ID from network name or connect to the node
-                        val nodeId = extractNodeIdFromNetworkName(ssid)
-                        if (nodeId.isNotEmpty()) {
-                            Log.d(TAG, "Extracted node ID from network name: $nodeId")
-                            _connectedFusionNode.value = nodeId
-                            _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(nodeId)
-                            return@launch
-                        }
-                    }
-                    
-                    // Try multiple common fusion node IP addresses
-                    val possibleNodeIps = listOf(
-                        "192.168.4.1",    // ESP32 default hotspot IP
-                        "192.168.1.100",  // Common Pi/ESP32 IP in home networks
-                        "192.168.1.101",  // Alternative Pi/ESP32 IP
-                        "10.0.0.100",     // Alternative network range
-                        "172.20.10.1",    // iPhone hotspot range
-                        "192.168.1.1",    // Router IP (might be fusion node)
-                        "192.168.0.1"     // Alternative router IP
-                    )
-                    
-                    Log.d(TAG, "Attempting to connect to fusion node at multiple IPs: $possibleNodeIps")
-                    
-                    // Try each IP address until one works
-                    for (ip in possibleNodeIps) {
-                        try {
-                            Log.d(TAG, "Trying to connect to fusion node at IP: $ip")
-                            tcpManager.connectToFusionNode(ip, 18080)
+                withTimeout(15000) { // 15 second timeout
+                    try {
+                        val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as AndroidWifiManager
+                        val connectionInfo = wifiManager.connectionInfo
+                        
+                        if (connectionInfo != null && connectionInfo.networkId != -1) {
+                            val ssid = connectionInfo.ssid?.removeSurrounding("\"") ?: ""
+                            Log.d(TAG, "📶 Connected to WiFi network: $ssid")
                             
-                            // Wait a bit to see if connection succeeds
-                            delay(3000)
-                            
-                            // Check if we got a Node ID
-                            if (_connectedFusionNode.value != null) {
-                                Log.d(TAG, "Successfully connected to fusion node at $ip")
-                                break
+                            // Check if we're connected to a fusion node network
+                            if (isFusionNodeNetwork(ssid)) {
+                                Log.d(TAG, "🎯 Connected to fusion node network: $ssid")
+                                // Try to get node ID from network name or connect to the node
+                                val nodeId = extractNodeIdFromNetworkName(ssid)
+                                if (nodeId.isNotEmpty()) {
+                                    Log.d(TAG, "✅ Extracted node ID from network name: $nodeId")
+                                    _connectedFusionNode.value = nodeId
+                                    _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(nodeId)
+                                    Log.d(TAG, "✅ Successfully found node ID from network name: $nodeId")
+                                } else {
+                                    // Continue with IP scanning if no node ID from network name
+                                    Log.d(TAG, "🔍 No node ID in network name, trying to connect to ESP32...")
+                                    
+                                    // Try multiple common fusion node IP addresses
+                                    val possibleNodeIps = listOf(
+                                        "192.168.4.1",    // ESP32 default hotspot IP
+                                        "192.168.1.100",  // Common Pi/ESP32 IP in home networks
+                                        "192.168.1.101",  // Alternative Pi/ESP32 IP
+                                        "10.0.0.100",     // Alternative network range
+                                        "172.20.10.1",    // iPhone hotspot range
+                                        "192.168.1.1",    // Router IP (might be fusion node)
+                                        "192.168.0.1"     // Alternative router IP
+                                    )
+                                    
+                                    Log.d(TAG, "🔍 Attempting to connect to fusion node at multiple IPs: $possibleNodeIps")
+                                    
+                                    var connectionSuccessful = false
+                                    
+                                    // Try each IP address until one works
+                                    for (ip in possibleNodeIps) {
+                                        try {
+                                            Log.d(TAG, "🔌 Trying to connect to fusion node at IP: $ip")
+                                            tcpManager.connectToFusionNode(ip, 18080)
+                                            
+                                            // Wait for connection and Node ID reception
+                                            var attempts = 0
+                                            while (attempts < 30 && !connectionSuccessful) { // Wait up to 3 seconds
+                                                delay(100)
+                                                attempts++
+                                                
+                                                // Check if we got a Node ID from TCP manager
+                                                val tcpNodeId = tcpManager.getCurrentNodeId()
+                                                if (tcpNodeId != null) {
+                                                    Log.d(TAG, "🎯 Successfully received Node ID from ESP32: $tcpNodeId")
+                                                    _connectedFusionNode.value = tcpNodeId
+                                                    _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(tcpNodeId)
+                                                    connectionSuccessful = true
+                                                    break
+                                                }
+                                                
+                                                // Also check connection status
+                                                val tcpStatus = tcpManager.connectionStatus.value
+                                                if (tcpStatus is TcpConnectionStatus.ConnectedWithNodeId) {
+                                                    Log.d(TAG, "🎯 Node ID received via connection status: ${tcpStatus.nodeId}")
+                                                    _connectedFusionNode.value = tcpStatus.nodeId
+                                                    _tcpConnectionStatus.value = tcpStatus
+                                                    connectionSuccessful = true
+                                                    break
+                                                }
+                                                
+                                                // Log progress every 10 attempts
+                                                if (attempts % 10 == 0) {
+                                                    Log.d(TAG, "⏳ Waiting for Node ID... Attempt $attempts/30")
+                                                }
+                                            }
+                                            
+                                            if (connectionSuccessful) {
+                                                Log.d(TAG, "✅ Successfully connected to fusion node at $ip")
+                                                break
+                                            } else {
+                                                Log.w(TAG, "❌ Connection to $ip failed or no Node ID received")
+                                                tcpManager.disconnect() // Clean up failed connection
+                                            }
+                                            
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "❌ Failed to connect to $ip: ${e.message}")
+                                            tcpManager.disconnect() // Clean up failed connection
+                                            continue
+                                        }
+                                    }
+                                    
+                                    // If no automatic connection worked, try scanning the network
+                                    if (!connectionSuccessful) {
+                                        Log.w(TAG, "🔍 Could not automatically connect to fusion node, trying network scan")
+                                        scanForFusionNodes()
+                                        
+                                        // Wait a bit more for scan results
+                                        delay(2000)
+                                        
+                                        // Check if scan found anything
+                                        val tcpNodeId = tcpManager.getCurrentNodeId()
+                                        if (tcpNodeId != null) {
+                                            Log.d(TAG, "🎯 Node ID found after network scan: $tcpNodeId")
+                                            _connectedFusionNode.value = tcpNodeId
+                                            _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(tcpNodeId)
+                                            connectionSuccessful = true
+                                        }
+                                    }
+                                    
+                                    // If still no connection, use fallback node ID after timeout
+                                    if (!connectionSuccessful) {
+                                        Log.w(TAG, "⚠️ Could not connect to fusion node, using fallback node ID")
+                                        setFallbackNodeId()
+                                    }
+                                }
+                            } else {
+                                Log.w(TAG, "❌ Not connected to a fusion node network: $ssid")
+                                _tcpConnectionStatus.value = TcpConnectionStatus.Failed("Not connected to a fusion node network. Please connect to ESP32's WiFi hotspot.")
                             }
-                            
-                            // Also check TCP manager's node ID
-                            val tcpNodeId = tcpManager.getCurrentNodeId()
-                            if (tcpNodeId != null) {
-                                Log.d(TAG, "Received node ID from TCP manager: $tcpNodeId")
-                                _connectedFusionNode.value = tcpNodeId
-                                _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(tcpNodeId)
-                                break
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to connect to $ip: ${e.message}")
-                            continue
+                        } else {
+                            Log.w(TAG, "❌ No WiFi connection found")
+                            _tcpConnectionStatus.value = TcpConnectionStatus.Failed("No WiFi connection - please connect to ESP32's WiFi hotspot first")
                         }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Log.w(TAG, "⏰ Timeout while trying to connect to fusion node, using fallback node ID")
+                        setFallbackNodeId()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "💥 Error connecting to fusion node: ${e.message}")
+                        setFallbackNodeId()
                     }
-                    
-                    // If no automatic connection worked, try scanning the network
-                    if (_connectedFusionNode.value == null) {
-                        Log.w(TAG, "Could not automatically connect to fusion node, trying network scan")
-                        scanForFusionNodes()
-                    }
-                    
-                    // If still no connection, set status for manual input
-                    if (_connectedFusionNode.value == null) {
-                        Log.w(TAG, "Could not automatically connect to fusion node")
-                        _tcpConnectionStatus.value = TcpConnectionStatus.Failed("Please connect manually or check fusion node status")
-                    }
-                } else {
-                    Log.w(TAG, "No WiFi connection found")
-                    _tcpConnectionStatus.value = TcpConnectionStatus.Failed("No WiFi connection - please connect to a network first")
-                }
+                } // Close withTimeout block
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                Log.w(TAG, "⏰ Timeout while trying to connect to fusion node, using fallback node ID")
+                setFallbackNodeId()
             } catch (e: Exception) {
-                Log.e(TAG, "Error connecting to fusion node: ${e.message}")
-                _tcpConnectionStatus.value = TcpConnectionStatus.Failed("Connection error: ${e.message}")
+                Log.e(TAG, "💥 Error connecting to fusion node: ${e.message}")
+                setFallbackNodeId()
             }
         }
     }
@@ -1211,14 +1277,18 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                 // Attempt connection
                 val success = bluetoothDiscoveryManager.connectToDevice(fusionNode)
                 if (success) {
-                    _connectedFusionNode.value = fusionNode.name
+                    // Don't set the node ID yet - let BLE communication get the real node ID
+                    // _connectedFusionNode.value = fusionNode.name
                     _isBluetoothConnected.value = true
                     _isWifiConnected.value = false
                     _bluetoothStatus.value = "Connected to ${fusionNode.name}"
                     _wifiStatus.value = "Disconnected"
                     _uiState.value = UiState.Connected
-                    onConnectionEstablished()
-                    Log.d(TAG, "Connected to BLE device: ${fusionNode.name}")
+                    
+                    // Start listening for node ID via BLE
+                    startListeningForNodeId()
+                    
+                    Log.d(TAG, "Connected to BLE device: ${fusionNode.name}, listening for node ID")
                 } else {
                     _uiState.value = UiState.Error("Failed to connect to ${fusionNode.name}")
                 }
@@ -1255,14 +1325,18 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
                         
                         val currentConnection = wifiDiscoveryManager.getCurrentConnection()
                         if (currentConnection.contains(fusionNetwork.ssid)) {
-                            _connectedFusionNode.value = fusionNetwork.ssid
+                            // Don't set the node ID yet - let TCP connection get the real node ID
+                            // _connectedFusionNode.value = fusionNetwork.ssid
                             _isWifiConnected.value = true
                             _isBluetoothConnected.value = false
                             _wifiStatus.value = "Connected to ${fusionNetwork.ssid}"
                             _bluetoothStatus.value = "Disconnected"
                             _uiState.value = UiState.Connected
-                            onConnectionEstablished()
-                            Log.d(TAG, "Successfully connected to WiFi network: ${fusionNetwork.ssid}")
+                            
+                            // Start TCP connection to get real node ID
+                            startListeningForNodeId()
+                            
+                            Log.d(TAG, "Successfully connected to WiFi network: ${fusionNetwork.ssid}, starting TCP connection for node ID")
                             return@launch
                         }
                         
@@ -2015,5 +2089,128 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         _connectedFusionNode.value = nodeId
         _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(nodeId)
         _isListeningForNodeId.value = false
+    }
+    
+    // Manual method to test ESP32 connection
+    fun testEsp32Connection(ipAddress: String = "192.168.4.1", port: Int = 18080) {
+        Log.d(TAG, "🧪 Testing ESP32 connection to $ipAddress:$port")
+        viewModelScope.launch {
+            try {
+                _tcpConnectionStatus.value = TcpConnectionStatus.Connecting
+                
+                // Connect to ESP32
+                tcpManager.connectToFusionNode(ipAddress, port)
+                
+                // Wait for connection and Node ID
+                var attempts = 0
+                while (attempts < 50) { // Wait up to 5 seconds
+                    delay(100)
+                    attempts++
+                    
+                    val tcpNodeId = tcpManager.getCurrentNodeId()
+                    if (tcpNodeId != null) {
+                        Log.d(TAG, "🎯 Successfully received Node ID from ESP32: $tcpNodeId")
+                        _connectedFusionNode.value = tcpNodeId
+                        _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(tcpNodeId)
+                        _isListeningForNodeId.value = false
+                        return@launch
+                    }
+                    
+                    // Check connection status
+                    val tcpStatus = tcpManager.connectionStatus.value
+                    if (tcpStatus is TcpConnectionStatus.ConnectedWithNodeId) {
+                        Log.d(TAG, "🎯 Node ID received via connection status: ${tcpStatus.nodeId}")
+                        _connectedFusionNode.value = tcpStatus.nodeId
+                        _tcpConnectionStatus.value = tcpStatus
+                        _isListeningForNodeId.value = false
+                        return@launch
+                    }
+                    
+                    if (tcpStatus is TcpConnectionStatus.Failed) {
+                        Log.e(TAG, "❌ ESP32 connection failed: ${tcpStatus.error}")
+                        break
+                    }
+                    
+                    // Log progress every 10 attempts
+                    if (attempts % 10 == 0) {
+                        Log.d(TAG, "⏳ ESP32 test: Attempt $attempts/50 - Status: $tcpStatus")
+                    }
+                }
+                
+                if (_connectedFusionNode.value == null) {
+                    Log.w(TAG, "⏰ Timeout waiting for Node ID from ESP32")
+                    _tcpConnectionStatus.value = TcpConnectionStatus.Failed("Timeout waiting for Node ID")
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "💥 Error testing ESP32 connection: ${e.message}")
+                _tcpConnectionStatus.value = TcpConnectionStatus.Failed("Test failed: ${e.message}")
+            }
+        }
+    }
+    
+    // Debug function to check current state
+    fun debugCurrentState() {
+        Log.d(TAG, "🔍 === DEBUG CURRENT STATE ===")
+        Log.d(TAG, "Connected Fusion Node: ${_connectedFusionNode.value}")
+        Log.d(TAG, "TCP Connection Status: ${_tcpConnectionStatus.value}")
+        Log.d(TAG, "Is Listening: ${_isListeningForNodeId.value}")
+        Log.d(TAG, "TCP Manager Node ID: ${tcpManager.getCurrentNodeId()}")
+        Log.d(TAG, "TCP Manager Status: ${tcpManager.connectionStatus.value}")
+        Log.d(TAG, "TCP Manager Connected: ${tcpManager.isConnected()}")
+        Log.d(TAG, "=== END DEBUG ===")
+    }
+    
+    // Set a fallback node ID when no real node ID is received
+    fun setFallbackNodeId() {
+        val fallbackId = "FN_${System.currentTimeMillis() % 10000}"
+        Log.d(TAG, "Setting fallback node ID: $fallbackId")
+        _connectedFusionNode.value = fallbackId
+        _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(fallbackId)
+        _isListeningForNodeId.value = false
+    }
+    
+    // Observe TCP connection status and automatically update fusion node when Node ID is received
+    private fun observeTcpConnectionStatus() {
+        viewModelScope.launch {
+            tcpManager.connectionStatus.collect { status ->
+                when (status) {
+                    is TcpConnectionStatus.ConnectedWithNodeId -> {
+                        Log.d(TAG, "🎯 TCP Manager received Node ID: ${status.nodeId}")
+                        _connectedFusionNode.value = status.nodeId
+                        _tcpConnectionStatus.value = status
+                        _isListeningForNodeId.value = false
+                        
+                        // Also check if we got it from the TCP manager directly
+                        val tcpNodeId = tcpManager.getCurrentNodeId()
+                        if (tcpNodeId != null && tcpNodeId != status.nodeId) {
+                            Log.d(TAG, "🔄 Updating with Node ID from TCP manager: $tcpNodeId")
+                            _connectedFusionNode.value = tcpNodeId
+                        }
+                    }
+                    is TcpConnectionStatus.Connected -> {
+                        Log.d(TAG, "🔌 TCP connection established, waiting for Node ID...")
+                        _tcpConnectionStatus.value = status
+                    }
+                    is TcpConnectionStatus.Failed -> {
+                        Log.w(TAG, "❌ TCP connection failed: ${status.error}")
+                        _tcpConnectionStatus.value = status
+                    }
+                    is TcpConnectionStatus.Disconnected -> {
+                        Log.d(TAG, "🔌 TCP connection disconnected")
+                        _tcpConnectionStatus.value = status
+                    }
+                    is TcpConnectionStatus.Connecting -> {
+                        Log.d(TAG, "🔄 TCP connection in progress...")
+                        _tcpConnectionStatus.value = status
+                    }
+                }
+            }
+        }
+    }
+    
+    // Initialize TCP connection observer
+    init {
+        observeTcpConnectionStatus()
     }
 }

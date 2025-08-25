@@ -1706,6 +1706,59 @@ fun NodeListeningScreen(
                 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Test ESP32 Connection Button (for debugging)
+                Button(
+                    onClick = { 
+                        viewModel.testEsp32Connection()
+                        viewModel.debugCurrentState()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Transparent
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color(0xFFF59E0B), // amber-500
+                                        Color(0xFFEF4444)  // red-500
+                                    )
+                                ),
+                                RoundedCornerShape(12.dp)
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Test Icon",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            
+                            Text(
+                                text = "Test ESP32 Connection",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
                 // Continue Button
                 Button(
                     onClick = onContinue,
