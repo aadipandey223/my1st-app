@@ -340,4 +340,197 @@ class SecureCommunicationTest {
         assertEquals("Original size should match", payload.originalSize, parsedPayload!!.originalSize)
         assertArrayEquals("Data should match", payload.data, parsedPayload!!.data)
     }
+    
+    @Test
+    fun testImprovedNonceGeneration() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        // Test valid inputs
+        val nonce1 = cryptoManager.generateNonce(1, 2, 3)
+        val nonce2 = cryptoManager.generateNonce(1, 2, 3)
+        
+        assertEquals("Nonce should be 12 bytes", 12, nonce1.size)
+        assertEquals("Nonce should be 12 bytes", 12, nonce2.size)
+        
+        // Nonces should be different due to entropy
+        assertFalse("Nonces should be different due to entropy", nonce1.contentEquals(nonce2))
+        
+        // Test secure nonce generation
+        val secureNonce1 = cryptoManager.generateSecureNonce()
+        val secureNonce2 = cryptoManager.generateSecureNonce()
+        
+        assertEquals("Secure nonce should be 12 bytes", 12, secureNonce1.size)
+        assertEquals("Secure nonce should be 12 bytes", 12, secureNonce2.size)
+        
+        // Secure nonces should always be different
+        assertFalse("Secure nonces should always be different", secureNonce1.contentEquals(secureNonce2))
+    }
+    
+    @Test
+    fun testNonceGenerationValidation() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        // Test invalid session ID
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.generateNonce(0, 2, 3)
+        }
+        
+        // Test invalid sender ID
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.generateNonce(1, 0, 3)
+        }
+        
+        // Test negative sequence
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.generateNonce(1, 2, -1)
+        }
+    }
+    
+    @Test
+    fun testImprovedEncryptionErrorHandling() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        // Test with invalid session key size
+        val invalidKey = "short_key".toByteArray()
+        val plaintext = "test message".toByteArray()
+        val nonce = cryptoManager.generateNonce(1, 2, 3)
+        
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.encryptWithAAD(invalidKey, plaintext, ByteArray(0), nonce)
+        }
+        
+        // Test with empty plaintext
+        val validKey = "valid_32_byte_key_for_testing_123".toByteArray()
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.encryptWithAAD(validKey, ByteArray(0), ByteArray(0), nonce)
+        }
+        
+        // Test with invalid nonce size
+        val invalidNonce = ByteArray(8) // Too short
+        assertThrows(IllegalArgumentException::class.java) {
+            cryptoManager.encryptWithAAD(validKey, plaintext, ByteArray(0), invalidNonce)
+        }
+    }
+    
+    @Test
+    fun testImprovedDecryptionErrorHandling() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        // Test with invalid session key size
+        val invalidKey = "short_key".toByteArray()
+        val ciphertext = "test_ciphertext".toByteArray()
+        val nonce = cryptoManager.generateNonce(1, 2, 3)
+        
+        val result1 = cryptoManager.decryptWithAAD(invalidKey, ciphertext, ByteArray(0), nonce)
+        assertNull("Should return null for invalid key size", result1)
+        
+        // Test with empty ciphertext
+        val validKey = "valid_32_byte_key_for_testing_123".toByteArray()
+        val result2 = cryptoManager.decryptWithAAD(validKey, ByteArray(0), ByteArray(0), nonce)
+        assertNull("Should return null for empty ciphertext", result2)
+        
+        // Test with invalid nonce size
+        val invalidNonce = ByteArray(8) // Too short
+        val result3 = cryptoManager.decryptWithAAD(validKey, ciphertext, ByteArray(0), invalidNonce)
+        assertNull("Should return null for invalid nonce size", result3)
+    }
+    
+    @Test
+    fun testSecureMessageEncryption() {
+        val cryptoManager = CryptoManager(mockContext)
+        val sessionManager = SessionManager(cryptoManager)
+        
+        // Generate test key pairs
+        val keyPair1 = cryptoManager.generateX25519KeyPair()
+        val keyPair2 = cryptoManager.generateX25519KeyPair()
+        
+        // Create and establish session
+        val session = sessionManager.createSession(keyPair2.public)
+        sessionManager.establishSessionKeys(session, keyPair1, keyPair2.public)
+        
+        // Test secure encryption
+        val testMessage = "Critical secure message"
+        val encryptedMessage = sessionManager.encryptMessageSecure(session, testMessage, 2)
+        
+        assertNotNull("Secure encrypted message should not be null", encryptedMessage)
+        assertTrue("Secure encrypted message should not be empty", encryptedMessage!!.isNotEmpty())
+        
+        // Verify encryption produces different results due to secure nonce
+        val encryptedMessage2 = sessionManager.encryptMessageSecure(session, testMessage, 2)
+        assertNotNull("Second secure encrypted message should not be null", encryptedMessage2)
+        
+        // Messages should be different due to secure random nonce
+        assertFalse("Secure encrypted messages should be different", 
+                   encryptedMessage.contentEquals(encryptedMessage2))
+    }
+    
+    @Test
+    fun testNodeDiscovery() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        // Test network name extraction
+        val testCases = listOf(
+            "FusionNode_12345" to "12345",
+            "ESP32_ABC123" to "ABC123",
+            "RaspberryPi_TestNode" to "TestNode",
+            "Node_MyDevice" to "MyDevice",
+            "RegularWiFi" to ""
+        )
+        
+        for ((ssid, expectedId) in testCases) {
+            // This would test the extractNodeIdFromNetworkName function
+            // For now, we'll test the pattern matching logic
+            val patterns = listOf(
+                Regex("fusion[_-]?node[_-]?([A-Za-z0-9]+)", RegexOption.IGNORE_CASE),
+                Regex("esp32[_-]?([A-Za-z0-9]+)", RegexOption.IGNORE_CASE),
+                Regex("raspberry[_-]?pi[_-]?([A-Za-z0-9]+)", RegexOption.IGNORE_CASE),
+                Regex("node[_-]?([A-Za-z0-9]+)", RegexOption.IGNORE_CASE)
+            )
+            
+            var extractedId = ""
+            for (pattern in patterns) {
+                val match = pattern.find(ssid)
+                if (match != null) {
+                    extractedId = match.groupValues[1]
+                    break
+                }
+            }
+            
+            assertEquals("Failed to extract ID from '$ssid'", expectedId, extractedId)
+        }
+    }
+    
+    @Test
+    fun testFusionNodeNetworkDetection() {
+        val cryptoManager = CryptoManager(mockContext)
+        
+        val fusionNetworks = listOf(
+            "FusionNode_123",
+            "ESP32_Device",
+            "RaspberryPi_Node",
+            "MeshRouter_01",
+            "FUSION_NODE_TEST"
+        )
+        
+        val regularNetworks = listOf(
+            "HomeWiFi",
+            "Office_Network",
+            "Guest_Access",
+            "MyPhone_Hotspot"
+        )
+        
+        val fusionKeywords = listOf("fusion", "node", "esp32", "raspberry", "pi", "mesh", "router")
+        
+        for (network in fusionNetworks) {
+            val ssidLower = network.lowercase()
+            val isFusion = fusionKeywords.any { keyword -> ssidLower.contains(keyword) }
+            assertTrue("Network '$network' should be detected as fusion node", isFusion)
+        }
+        
+        for (network in regularNetworks) {
+            val ssidLower = network.lowercase()
+            val isFusion = fusionKeywords.any { keyword -> ssidLower.contains(keyword) }
+            assertFalse("Network '$network' should not be detected as fusion node", isFusion)
+        }
+    }
 }

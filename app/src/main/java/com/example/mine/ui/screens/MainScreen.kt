@@ -5,21 +5,8 @@ import android.content.Intent
 import android.net.wifi.WifiManager
 import android.provider.Settings
 import android.bluetooth.BluetoothAdapter
-import android.Manifest
-import android.content.pm.PackageManager
-import android.content.ClipboardManager
-import android.content.ClipData
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,35 +27,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.style.TextAlign
-import com.example.mine.network.TcpConnectionStatus
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-
-
-import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
-import com.example.mine.viewmodel.SecureChatViewModel
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.common.InputImage
-
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.text.replaceFirstChar
-
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.text.style.TextAlign
 import android.util.Log
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.widget.Toast
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import com.example.mine.viewmodel.SecureChatViewModel
+import com.example.mine.network.TcpConnectionStatus
+import androidx.compose.material3.CircularProgressIndicator
 
 @Composable
 fun ModernMainScreen(viewModel: SecureChatViewModel) {
@@ -104,8 +78,13 @@ fun ModernMainScreen(viewModel: SecureChatViewModel) {
     // Ensure public key exists when reaching manual key input screen
     LaunchedEffect(currentScreen) {
         if (currentScreen == "manual-key-input") {
-            Log.d("MainScreen", "Manual key input screen reached, ensuring public key exists...")
-            viewModel.ensurePublicKeyExists()
+            try {
+                Log.d("MainScreen", "Manual key input screen reached, ensuring public key exists...")
+                viewModel.ensurePublicKeyExists()
+            } catch (e: Exception) {
+                Log.e("MainScreen", "Error ensuring public key exists", e)
+                // Continue without crashing
+            }
         }
     }
 
@@ -115,9 +94,9 @@ fun ModernMainScreen(viewModel: SecureChatViewModel) {
             "connection-type" -> "start"
             "connection-guide" -> "connection-type"
             "connection-status" -> "connection-guide"
-            "continue" -> "connection-status"
-            "manual-key-input" -> "continue"
-            "checking-connection" -> "manual-key-input"
+            "node-listening" -> "connection-status"
+            "manual-key-input" -> "node-listening"
+            "key-generation" -> "manual-key-input"
             "chat" -> "start"
             else -> "start"
         }
@@ -178,9 +157,9 @@ fun ModernMainScreen(viewModel: SecureChatViewModel) {
                     onUpdateConnectedDevice = { connectedDeviceInfo = it }
                 )
             },
-            onContinue = { currentScreen = "continue" }
+            onContinue = { currentScreen = "node-listening" }
         )
-        "continue" -> NodeListeningScreen(
+        "node-listening" -> NodeListeningScreen(
             selectedDevice = connectedDeviceInfo,
             viewModel = viewModel,
             onContinue = { currentScreen = "manual-key-input" }
@@ -195,6 +174,7 @@ fun ModernMainScreen(viewModel: SecureChatViewModel) {
         )
         "chat" -> ChatScreen(
             selectedDevice = connectedDeviceInfo,
+            viewModel = viewModel,
             onReset = { currentScreen = "start" }
         )
     }
@@ -250,6 +230,28 @@ fun checkWifiConnection(context: Context): Boolean {
         connectionInfo != null && connectionInfo.networkId != -1
     } catch (e: Exception) {
         false
+    }
+}
+
+// Function to get fusion node ID from WiFi connection
+fun getFusionNodeIdFromWifi(context: Context): String? {
+    return try {
+        val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val connectionInfo = wifiManager.connectionInfo
+        if (connectionInfo != null && connectionInfo.networkId != -1) {
+            // Simulate getting fusion node ID from connected node
+            // In real implementation, this would:
+            // 1. Connect to the WiFi network
+            // 2. Send a request to the connected node
+            // 3. Parse JSON response like: {"fusion_node_id": "FN_ABC123", "status": "connected"}
+            // 4. Extract and return the fusion_node_id
+            
+            // For demo purposes, generate a realistic-looking fusion node ID
+            val networkName = connectionInfo.ssid?.removeSurrounding("\"") ?: "Unknown"
+            "FN_${networkName.take(3).uppercase()}_${(1000..9999).random()}"
+        } else null
+    } catch (e: Exception) {
+        null
     }
 }
 
@@ -428,8 +430,6 @@ fun StartScreen(onDiscoverDevices: () -> Unit) {
                     }
                 }
             }
-
-
         }
     }
 }
@@ -1477,6 +1477,8 @@ fun PhoneSettingsScreen(
     }
 }
 
+
+
 // Node Listening Screen
 @Composable
 fun NodeListeningScreen(
@@ -1487,51 +1489,54 @@ fun NodeListeningScreen(
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(true) }
     var receivedNodeId by remember { mutableStateOf<String?>(null) }
-    var listeningTime by remember { mutableStateOf(0) }
+    var connectionStatus by remember { mutableStateOf("Connecting to fusion node...") }
     
-    // Get current fusion node info and TCP connection status
-    val currentFusionNode by viewModel.connectedFusionNode.collectAsState()
-    val isListeningForNodeId by viewModel.isListeningForNodeId.collectAsState()
-    val tcpConnectionStatus by viewModel.wifiManager.getTcpConnectionStatus().collectAsState()
-    val connectedNodeId by viewModel.wifiManager.getConnectedNodeId().collectAsState()
-    
-    // Start listening when screen appears
+    // Start listening for fusion node ID when screen is displayed
     LaunchedEffect(Unit) {
         viewModel.startListeningForNodeId()
     }
     
-    // Timer for listening duration
-    LaunchedEffect(isListening) {
-        while (isListening) {
-            delay(1000)
-            listeningTime++
-        }
-    }
+    // Observe the connected fusion node ID from ViewModel
+    val connectedNodeId by viewModel.connectedFusionNode.collectAsState()
+    val tcpConnectionStatus by viewModel.tcpConnectionStatus.collectAsState()
     
-    // Check if we received a node ID from TCP
     LaunchedEffect(connectedNodeId) {
         if (connectedNodeId != null) {
             receivedNodeId = connectedNodeId
-            isListening = false
+            connectionStatus = "Fusion node ID received!"
         }
     }
     
-    // Check if we received a node ID from other sources
-    LaunchedEffect(currentFusionNode) {
-        if (currentFusionNode != null && receivedNodeId == null) {
-            receivedNodeId = viewModel.getFusionNodeInfo()
-            isListening = false
+    // Update connection status based on TCP connection
+    LaunchedEffect(tcpConnectionStatus) {
+        val currentStatus = tcpConnectionStatus
+        connectionStatus = when (currentStatus) {
+            is TcpConnectionStatus.Connecting -> "Connecting to fusion node..."
+            is TcpConnectionStatus.Connected -> "Connected to fusion node, listening for ID..."
+            is TcpConnectionStatus.ConnectedWithNodeId -> {
+                receivedNodeId = currentStatus.nodeId
+                "Fusion node ID received: ${currentStatus.nodeId}"
+            }
+            is TcpConnectionStatus.Failed -> "Connection failed: ${currentStatus.error}"
+            else -> "Disconnected from fusion node"
         }
     }
     
+    // Stop listening when leaving the screen
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stopListeningForNodeId()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF064E3B), // green-900
-                        Color(0xFF1E40AF), // blue-900
+                        Color(0xFF92400E), // yellow-900
+                        Color(0xFFEA580C), // orange-900
                         Color(0xFF000000)  // black
                     )
                 )
@@ -1550,46 +1555,43 @@ fun NodeListeningScreen(
                     .size(80.dp)
                     .clip(RoundedCornerShape(40.dp))
                     .background(
-                        if (receivedNodeId != null) {
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFF34D399), // green-400
-                                    Color(0xFF3B82F6)  // blue-500
-                                )
+                        Brush.horizontalGradient(
+                            colors = if (receivedNodeId != null) {
+                                listOf(
+                                    Color(0xFF10B981), // green-500
+                                Color(0xFF3B82F6)  // blue-500
                             )
-                        } else {
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFFF59E0B), // amber-500
-                                    Color(0xFFEF4444)  // red-500
+                            } else {
+                                listOf(
+                                    Color(0xFFFBBF24), // yellow-400
+                                    Color(0xFFFB923C)  // orange-500
                                 )
-                            )
-                        }
+                            }
+                        )
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 if (receivedNodeId != null) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Node ID Received",
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp)
-                    )
+                Icon(
+                    imageVector = Icons.Default.Check,
+                        contentDescription = "Success",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
                 } else {
-                    Icon(
-                        imageVector = Icons.Default.Radio,
-                        contentDescription = "Listening",
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(40.dp),
+                        color = Color.White,
+                        strokeWidth = 4.dp
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Status Title
+            // Title
             Text(
-                text = if (receivedNodeId != null) "Node ID Received!" else "Listening for Fusion Node",
+                text = if (receivedNodeId != null) "Fusion Node Connected!" else "Listening for Fusion Node",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -1597,163 +1599,114 @@ fun NodeListeningScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Status Description
+            // Status
             Text(
-                text = if (receivedNodeId != null) {
-                    "Successfully received node ID from ESP32"
-                } else {
-                    "Waiting for ESP32 to send node ID..."
-                },
+                text = connectionStatus,
                 fontSize = 16.sp,
-                color = if (receivedNodeId != null) Color(0xFFBBF7D0) else Color(0xFFFED7AA),
-                textAlign = TextAlign.Center
-            )
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            // TCP Connection Status
-            Text(
-                text = when (tcpConnectionStatus) {
-                    is TcpConnectionStatus.Connecting -> "Connecting to ESP32..."
-                    is TcpConnectionStatus.Connected -> "Connected to ESP32"
-                    is TcpConnectionStatus.ConnectedWithNodeId -> "Connected with Node ID"
-                    is TcpConnectionStatus.Failed -> "Connection failed: ${tcpConnectionStatus.error}"
-                    is TcpConnectionStatus.Disconnected -> "Disconnected from ESP32"
-                },
-                fontSize = 14.sp,
-                color = when (tcpConnectionStatus) {
-                    is TcpConnectionStatus.Connected, is TcpConnectionStatus.ConnectedWithNodeId -> Color(0xFF34D399)
-                    is TcpConnectionStatus.Connecting -> Color(0xFFF59E0B)
-                    is TcpConnectionStatus.Failed -> Color(0xFFEF4444)
-                    is TcpConnectionStatus.Disconnected -> Color(0xFF9CA3AF)
-                },
+                color = if (receivedNodeId != null) Color(0xFFBBF7D0) else Color(0xFFFED7AA), // green-200 or yellow-200
                 textAlign = TextAlign.Center
             )
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Node Information Card
+            // Node ID Display
+            if (receivedNodeId != null) {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f)
+                        containerColor = Color(0xFF064E3B).copy(alpha = 0.8f) // green-900/80
                 ),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
+                        modifier = Modifier.padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                        Icon(
+                            imageVector = Icons.Default.Router,
+                            contentDescription = "Fusion Node",
+                            tint = Color(0xFF34D399), // green-400
+                            modifier = Modifier.size(32.dp)
+                        )
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
                     Text(
-                        text = "Fusion Node Information",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                            text = "Fusion Node ID",
+                            fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF34D399) // green-400
                     )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    if (receivedNodeId != null) {
-                        // Show received node ID
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DeviceHub,
-                                contentDescription = "Node ID",
-                                tint = Color(0xFF34D399),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            
-                            Spacer(modifier = Modifier.width(12.dp))
-                            
-                            Text(
-                                text = "Node ID: $receivedNodeId",
-                                fontSize = 16.sp,
-                                color = Color.White,
-                                modifier = Modifier.weight(1f)
-                            )
-                            
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Node ID", receivedNodeId)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "Node ID copied!", Toast.LENGTH_SHORT).show()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy",
-                                    tint = Color(0xFF34D399),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        Text(
-                            text = "Status: Connected",
-                            fontSize = 14.sp,
-                            color = Color(0xFF34D399)
-                        )
-                    } else {
-                        // Show listening status
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Radio,
-                                contentDescription = "Listening",
-                                tint = Color(0xFFF59E0B),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            
-                            Spacer(modifier = Modifier.width(12.dp))
-                            
-                            Text(
-                                text = "Listening for ESP32...",
-                                fontSize = 16.sp,
-                                color = Color(0xFFF59E0B),
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        // Animated dots
-                        var dotCount by remember { mutableStateOf(0) }
-                        LaunchedEffect(Unit) {
-                            while (isListening) {
-                                delay(500)
-                                dotCount = (dotCount + 1) % 4
-                            }
-                        }
-                        
-                        Text(
-                            text = "Listening${".".repeat(dotCount)}",
-                            fontSize = 14.sp,
-                            color = Color(0xFFF59E0B)
-                        )
-                        
+
                         Spacer(modifier = Modifier.height(8.dp))
                         
                         Text(
-                            text = "Duration: ${listeningTime}s",
-                            fontSize = 12.sp,
-                            color = Color(0xFF9CA3AF)
+                            text = receivedNodeId!!,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
                         )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        // Copy Button
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Fusion Node ID", receivedNodeId)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Node ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(40.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFF34D399), // green-500
+                                                Color(0xFF3B82F6)  // blue-500
+                                            )
+                                        ),
+                                        RoundedCornerShape(12.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Icon",
+                                        tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                                        text = "Copy Node ID",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
-            }
+                
+                Spacer(modifier = Modifier.height(24.dp))
 
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Action Buttons
-            if (receivedNodeId != null) {
-                // Continue button when node ID is received
+                // Continue Button
                 Button(
                     onClick = onContinue,
                     modifier = Modifier
@@ -1783,14 +1736,14 @@ fun NodeListeningScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Continue",
+                                imageVector = Icons.Default.ArrowForward,
+                                contentDescription = "Continue Icon",
                                 tint = Color.White,
                                 modifier = Modifier.size(24.dp)
                             )
-
+                            
                             Spacer(modifier = Modifier.width(8.dp))
-
+                            
                             Text(
                                 text = "Continue to Key Exchange",
                                 fontSize = 18.sp,
@@ -1801,188 +1754,74 @@ fun NodeListeningScreen(
                     }
                 }
             } else {
-                // Manual input option
-                Button(
-                    onClick = {
-                        // Allow manual input if listening takes too long
-                        onContinue()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.Transparent
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color(0xFF6B7280), // gray-500
-                                        Color(0xFF4B5563)  // gray-600
-                                    )
-                                ),
-                                RoundedCornerShape(12.dp)
-                            )
+                    // Connection Status Card
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
+                        ),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text(
-                            text = "Enter Node ID Manually",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Router,
+                                contentDescription = "Fusion Node",
+                                tint = Color(0xFFFBBF24), // yellow-400
+                                modifier = Modifier.size(32.dp)
+                            )
+                            
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            Text(
+                                text = "Waiting for Fusion Node",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFFBBF24) // yellow-400
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Text(
+                                text = "Listening for node ID from fusion node...",
+                                fontSize = 14.sp,
+                                color = Color(0xFF9CA3AF), // gray-400
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
-        }
-    }
-}
-
-// Continue Screen
-@Composable
-fun ContinueScreen(
-    selectedDevice: DeviceInfo?,
-    onContinue: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF064E3B), // green-900
-                        Color(0xFF1E40AF), // blue-900
-                        Color(0xFF000000)  // black
-                    )
-                )
-            )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // Success Icon
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(RoundedCornerShape(40.dp))
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                Color(0xFF34D399), // green-400
-                                Color(0xFF3B82F6)  // blue-500
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Success Icon",
-                    tint = Color.White,
-                    modifier = Modifier.size(40.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Success Title
-            Text(
-                text = "Connection Established!",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Device Info Card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = selectedDevice?.name ?: "Unknown Device",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF34D399) // green-400
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Key,
-                            contentDescription = "Key Icon",
-                            tint = Color(0xFF60A5FA), // blue-400
-                            modifier = Modifier.size(16.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Text(
-                            text = "Keys Generated",
-                            fontSize = 12.sp,
-                            color = Color(0xFF93C5FD) // blue-300
-                        )
-                    }
-                }
-            }
-
+            
             Spacer(modifier = Modifier.height(32.dp))
-
+            
             // Continue Button
             Button(
                 onClick = onContinue,
+                enabled = receivedNodeId != null,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .height(56.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Transparent
+                    containerColor = if (receivedNodeId != null) {
+                        Color(0xFF10B981) // green-500
+                    } else {
+                        Color(0xFF6B7280) // gray-500
+                    }
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color(0xFF10B981), // green-500
-                                    Color(0xFF3B82F6)  // blue-600
-                                )
-                            ),
-                            RoundedCornerShape(12.dp)
-                        )
-                ) {
-                    Text(
-                        text = "Continue to Enter Public Key & Node ID",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
+                Text(
+                    text = if (receivedNodeId != null) "Continue to Key Exchange" else "Waiting for Node ID...",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White
+                )
             }
         }
     }
-}
+
 
 // Manual Key Input Screen
 @Composable
@@ -1991,61 +1830,12 @@ fun ManualKeyInputScreen(
     viewModel: SecureChatViewModel
 ) {
     val context = LocalContext.current
-    
     var peerPublicKey by remember { mutableStateOf("") }
-    var peerNodeId by remember { mutableStateOf("") }
-    var isKeyValid by remember { mutableStateOf(false) }
-    var isNodeIdValid by remember { mutableStateOf(false) }
-    var showError by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
-
-    // Get current device's public key info
+    var peerFusionNodeId by remember { mutableStateOf("") }
+    
+    // Get current device's public key and fusion node ID from ViewModel
     val currentPublicKey by viewModel.publicKey.collectAsState()
-    val currentFusionNode by viewModel.connectedFusionNode.collectAsState()
-    val isListeningForNodeId by viewModel.isListeningForNodeId.collectAsState()
-
-    // Validate public key format (basic validation)
-    fun validatePublicKey(key: String): Boolean {
-        return key.isNotBlank() && key.length >= 20 // Basic length check
-    }
-
-    // Validate node ID format
-    fun validateNodeId(nodeId: String): Boolean {
-        return nodeId.isNotBlank() && nodeId.length >= 5 // Basic length check
-    }
-
-    // Handle peer public key input
-    fun onPeerKeyChange(key: String) {
-        peerPublicKey = key
-        isKeyValid = validatePublicKey(key)
-        showError = false
-    }
-
-    // Handle peer node ID input
-    fun onPeerNodeIdChange(nodeId: String) {
-        peerNodeId = nodeId
-        isNodeIdValid = validateNodeId(nodeId)
-        showError = false
-    }
-
-    // Handle continue button
-    fun handleContinue() {
-        if (isKeyValid && isNodeIdValid) {
-            // Store the peer's public key and node ID in the ViewModel
-            viewModel.setPeerPublicKey(peerPublicKey)
-            viewModel.setPeerNodeId(peerNodeId)
-            onContinue()
-        } else {
-            showError = true
-            if (!isKeyValid && !isNodeIdValid) {
-                errorMessage = "Please enter both a valid public key and node ID"
-            } else if (!isKeyValid) {
-                errorMessage = "Please enter a valid public key"
-            } else {
-                errorMessage = "Please enter a valid node ID"
-            }
-        }
-    }
+    val currentFusionNodeId by viewModel.connectedFusionNode.collectAsState()
 
     Box(
         modifier = Modifier
@@ -2053,8 +1843,8 @@ fun ManualKeyInputScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF581C87), // purple-900
                         Color(0xFF1E40AF), // blue-900
+                        Color(0xFF3730A3), // indigo-900
                         Color(0xFF000000)  // black
                     )
                 )
@@ -2064,7 +1854,8 @@ fun ManualKeyInputScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -2073,17 +1864,32 @@ fun ManualKeyInputScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = "Key Icon",
-                    tint = Color(0xFFC084FC), // purple-400
-                    modifier = Modifier.size(48.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(40.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    Color(0xFF22D3EE), // cyan-400
+                                    Color(0xFFA855F7)  // purple-500
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VpnKey,
+                        contentDescription = "Key Exchange Icon",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Manual Key & Node Exchange",
+                    text = "Manual Key Exchange",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -2092,350 +1898,216 @@ fun ManualKeyInputScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Enter the other device's public key and node ID",
+                    text = "Enter your peer's public key and fusion node ID",
                     fontSize = 16.sp,
-                    color = Color(0xFFC4B5FD) // purple-200
+                    color = Color(0xFFBFDBFE) // blue-200
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
-            // Current Device Information Card
-             Card(
-                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
-                 ),
-                 shape = RoundedCornerShape(16.dp)
-             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    Text(
-                        text = "Your Device Information",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Public Key Info
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                         ) {
-                             Icon(
-                            imageVector = Icons.Default.Key,
-                            contentDescription = "Public Key",
-                            tint = Color(0xFF34D399), // green-400
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                             
-                             Text(
-                            text = "Public Key: ${viewModel.getPublicKeyInfo() ?: "Generating..."}",
-                            fontSize = 14.sp,
-                            color = Color(0xFFD1D5DB), // gray-300
-                            modifier = Modifier.weight(1f)
-                        )
-                        
-                        IconButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Public Key", viewModel.getPublicKeyInfo() ?: "")
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Public Key copied!", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy Public Key",
-                                tint = Color(0xFF34D399), // green-400
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Fusion Node Info
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeviceHub,
-                            contentDescription = "Fusion Node",
-                            tint = if (isListeningForNodeId) Color(0xFFF59E0B) else Color(0xFF60A5FA), // amber-500 if listening, blue-400 otherwise
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                        Text(
-                            text = if (isListeningForNodeId) {
-                                "Node ID: Listening for ESP32..."
-                            } else {
-                                "Node ID: ${viewModel.getFusionNodeInfo()}"
-                            },
-                            fontSize = 14.sp,
-                            color = if (isListeningForNodeId) Color(0xFFF59E0B) else Color(0xFFD1D5DB), // amber-500 if listening, gray-300 otherwise
-                            modifier = Modifier.weight(1f)
-                        )
-                        
-                        if (!isListeningForNodeId && currentFusionNode != null) {
-                            IconButton(
-                        onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Fusion Node ID", viewModel.getFusionNodeInfo())
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "Fusion Node ID copied!", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy Fusion Node ID",
-                                    tint = Color(0xFF60A5FA), // blue-400
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                    
-                    // Show listening status
-                    if (isListeningForNodeId) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(
-                                imageVector = Icons.Default.Radio,
-                                contentDescription = "Listening",
-                                tint = Color(0xFFF59E0B), // amber-500
-                                modifier = Modifier.size(12.dp)
-                                )
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                Text(
-                                text = "Listening for fusion node ID from ESP32...",
-                                fontSize = 12.sp,
-                                color = Color(0xFFF59E0B), // amber-500
-                                modifier = Modifier.weight(1f)
-                            )
-                            
-                            // Animated dot
-                            var dotCount by remember { mutableStateOf(0) }
-                            LaunchedEffect(Unit) {
-                                while (isListeningForNodeId) {
-                                    delay(500)
-                                    dotCount = (dotCount + 1) % 4
-                                }
-                            }
-                            
-                            Text(
-                                text = ".".repeat(dotCount),
-                                fontSize = 12.sp,
-                                color = Color(0xFFF59E0B) // amber-500
-                            )
-                        }
-                    } else if (currentFusionNode == null) {
-                        // Show button to start listening if no node ID is available
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                    Button(
-                                onClick = { viewModel.startListeningForNodeId() },
-                                modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFF59E0B) // amber-500
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.Radio,
-                                        contentDescription = "Start Listening",
-                                    tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                )
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                Text(
-                                        text = "Start Listening",
-                                        color = Color.White,
-                                        fontSize = 14.sp
-                                    )
-                                }
-                            }
-                            
-                Button(
-                                onClick = { viewModel.resetFusionNodeIdAndRestartListening() },
-                                modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFEF4444) // red-500
-                                ),
-                                shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "Reset",
-                                    tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                )
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                Text(
-                                        text = "Reset",
-                                        color = Color.White,
-                                        fontSize = 14.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Timestamp Info
-                    Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                            imageVector = Icons.Default.Schedule,
-                            contentDescription = "Timestamp",
-                            tint = Color(0xFFF59E0B), // amber-500
-                                modifier = Modifier.size(16.dp)
-                            )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                            Text(
-                            text = "Generated: ${viewModel.getCurrentTimestamp()}",
-                            fontSize = 14.sp,
-                            color = Color(0xFFD1D5DB) // gray-300
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Peer Information Input Card
-                Card(
-                    colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
+            // Your Device Information Card
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF064E3B).copy(alpha = 0.8f) // green-900/80
                 ),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                        modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.Start
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Enter Peer's Information",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        text = "Your Device Information",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF34D399) // green-400
                     )
                     
-                    Spacer(modifier = Modifier.height(12.dp))
-
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Your Public Key
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                        text = "Ask the other device user to share their public key and node ID, then enter them below:",
+                            text = "Your Public Key",
                             fontSize = 14.sp,
-                        color = Color(0xFFD1D5DB) // gray-300
-                    )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    // Public Key Input
-                    OutlinedTextField(
-                        value = peerPublicKey,
-                        onValueChange = { onPeerKeyChange(it) },
-                        label = { Text(text = "Peer's Public Key") },
-                        placeholder = { Text(text = "Enter the other device's public key here...") },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFFC084FC), // purple-400
-                            unfocusedBorderColor = Color(0xFF6B7280), // gray-500
-                            focusedLabelColor = Color(0xFFC084FC), // purple-400
-                            unfocusedLabelColor = Color(0xFF9CA3AF), // gray-400
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            cursorColor = Color(0xFFC084FC) // purple-400
-                        ),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Default,
-                            fontSize = 14.sp,
-                            color = Color.White
-                        ),
-                        singleLine = false,
-                        minLines = 3,
-                        maxLines = 5
-                    )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    // Node ID Input
-                    OutlinedTextField(
-                        value = peerNodeId,
-                        onValueChange = { onPeerNodeIdChange(it) },
-                        label = { Text(text = "Peer's Node ID") },
-                        placeholder = { Text(text = "Enter the other device's node ID here...") },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF60A5FA), // blue-400
-                            unfocusedBorderColor = Color(0xFF6B7280), // gray-500
-                            focusedLabelColor = Color(0xFF60A5FA), // blue-400
-                            unfocusedLabelColor = Color(0xFF9CA3AF), // gray-400
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            cursorColor = Color(0xFF60A5FA) // blue-400
-                        ),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Default,
-                            fontSize = 14.sp,
-                            color = Color.White
-                        ),
-                        singleLine = true
-                    )
-                    
-                    if (showError) {
+                            color = Color(0xFF9CA3AF), // gray-400
+                            fontWeight = FontWeight.Medium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                             
+                        Text(
+                            text = if (currentPublicKey != null) {
+                                val publicKeyBytes = currentPublicKey!!.public.encoded
+                                val publicKeyHex = publicKeyBytes.take(16).joinToString("") { "%02x".format(it) }
+                                "pk_$publicKeyHex"
+                            } else {
+                                "Generating..."
+                            },
+                            fontSize = 12.sp,
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                                .background(
+                                    Color(0xFF374151), // gray-800
+                                    RoundedCornerShape(8.dp)
+                                )
+                        )
+                        
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        // Copy Public Key Button
+                        Button(
+                            onClick = {
+                                if (currentPublicKey != null) {
+                                    val publicKeyBytes = currentPublicKey!!.public.encoded
+                                    val publicKeyHex = publicKeyBytes.take(16).joinToString("") { "%02x".format(it) }
+                                    val publicKeyString = "pk_$publicKeyHex"
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Public Key", publicKeyString)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Public key copied to clipboard", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Public key not ready yet", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFF34D399), // green-500
+                                                Color(0xFF3B82F6)  // blue-500
+                                            )
+                                        ),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Icon",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(6.dp))
+
+                                    Text(
+                                        text = "Copy Public Key",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Your Connected Fusion Node ID
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                                imageVector = Icons.Default.Error,
-                                contentDescription = "Error Icon",
-                                tint = Color(0xFFEF4444), // red-400
-                                modifier = Modifier.size(16.dp)
-                            )
                         Text(
-                                text = errorMessage,
-                                fontSize = 12.sp,
-                                color = Color(0xFFFCA5A5) // red-200
-                            )
+                            text = "Connected Fusion Node ID",
+                            fontSize = 14.sp,
+                            color = Color(0xFF9CA3AF), // gray-400
+                            fontWeight = FontWeight.Medium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = currentFusionNodeId ?: "Not connected",
+                            fontSize = 12.sp,
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                                .background(
+                                    Color(0xFF374151), // gray-800
+                                    RoundedCornerShape(8.dp)
+                                )
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        // Copy Fusion Node ID Button
+                        Button(
+                            onClick = {
+                                if (currentFusionNodeId != null) {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Fusion Node ID", currentFusionNodeId)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Fusion node ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "No fusion node connected", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFF34D399), // green-500
+                                                Color(0xFF3B82F6)  // blue-500
+                                            )
+                                        ),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = "Copy Icon",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(6.dp))
+
+                                    Text(
+                                        text = "Copy Node ID",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2443,100 +2115,165 @@ fun ManualKeyInputScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Continue Button
-            Button(
-                onClick = { handleContinue() },
-                enabled = isKeyValid && isNodeIdValid,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isKeyValid && isNodeIdValid) Color.Transparent else Color(0xFF4B5563)
+            // Peer Input Fields Card
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
                 ),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            if (isKeyValid && isNodeIdValid) {
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color(0xFF10B981), // green-500
-                                        Color(0xFF3B82F6)  // blue-600
-                                    )
-                                )
-                            } else {
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF4B5563), // gray-600
-                                        Color(0xFF4B5563)  // gray-600
-                                    )
+                Column(
+                    modifier = Modifier.padding(20.dp)
+                ) {
+                    Text(
+                        text = "Enter Peer Device Information",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF34D399) // green-400
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Peer Public Key Input
+                    Column(
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "Peer's Public Key",
+                            fontSize = 14.sp,
+                            color = Color(0xFF9CA3AF), // gray-400
+                            fontWeight = FontWeight.Medium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        OutlinedTextField(
+                            value = peerPublicKey,
+                            onValueChange = { peerPublicKey = it },
+                            placeholder = {
+                                Text(
+                                    text = "Enter peer's public key...",
+                                    color = Color(0xFF9CA3AF) // gray-400
                                 )
                             },
-                            RoundedCornerShape(16.dp)
-                        )
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Continue Icon",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                    Text(
-                            text = if (isKeyValid && isNodeIdValid) "Continue to Key Generation" else "Enter Valid Public Key & Node ID",
-                            fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                            color = Color.White
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF3B82F6), // blue-500
+                                unfocusedBorderColor = Color(0xFF4B5563), // gray-600
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                cursorColor = Color(0xFFC084FC) // purple-400
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
                         )
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Instructions Card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1F2937).copy(alpha = 0.5f) // gray-800/50
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
-                        text = "How to Exchange Keys & Node IDs:",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
                     
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     
-                    Text(
-                        text = "1. Share your public key and node ID with the other device user\n" +
-                               "2. Ask them to enter your public key and node ID in their app\n" +
-                               "3. Enter their public key and node ID in the fields above\n" +
-                               "4. Both devices should now have each other's keys and node IDs\n" +
-                               "5. Continue to generate shared key, session key, and payload",
-                        fontSize = 12.sp,
-                        color = Color(0xFF9CA3AF), // gray-400
-                        lineHeight = 16.sp
-                    )
+                    // Peer Fusion Node ID Input
+                    Column(
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            text = "Peer's Fusion Node ID",
+                            fontSize = 14.sp,
+                            color = Color(0xFF9CA3AF), // gray-400
+                            fontWeight = FontWeight.Medium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        OutlinedTextField(
+                            value = peerFusionNodeId,
+                            onValueChange = { peerFusionNodeId = it },
+                            placeholder = {
+                                Text(
+                                    text = "Enter peer's fusion node ID...",
+                                    color = Color(0xFF9CA3AF) // gray-400
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF3B82F6), // blue-500
+                                unfocusedBorderColor = Color(0xFF4B5563), // gray-600
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                cursorColor = Color(0xFFC084FC) // purple-400
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Continue Button
+                    Button(
+                        onClick = onContinue,
+                        enabled = peerPublicKey.isNotBlank() && peerFusionNodeId.isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    if (peerPublicKey.isNotBlank() && peerFusionNodeId.isNotBlank()) {
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFF10B981), // green-500
+                                                Color(0xFF3B82F6)  // blue-600
+                                            )
+                                        )
+                                    } else {
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color(0xFF4B5563), // gray-600
+                                                Color(0xFF4B5563)  // gray-600
+                                            )
+                                        )
+                                    },
+                                    RoundedCornerShape(16.dp)
+                                )
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowForward,
+                                    contentDescription = "Continue Icon",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                
+                                Spacer(modifier = Modifier.width(8.dp))
+                                
+                                Text(
+                                    text = if (peerPublicKey.isNotBlank() && peerFusionNodeId.isNotBlank()) 
+                                        "Continue to Key Generation" 
+                                    else 
+                                        "Enter Both Fields to Continue",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
+
 
 // Key Generation Screen
 @Composable
@@ -2544,163 +2281,52 @@ fun KeyGenerationScreen(
     onContinue: () -> Unit,
     viewModel: SecureChatViewModel
 ) {
-    var currentStep by remember { mutableStateOf(0) }
-    var sharedKeyGenerated by remember { mutableStateOf(false) }
-    var sessionKeyGenerated by remember { mutableStateOf(false) }
-    var payloadGenerated by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     var isGenerating by remember { mutableStateOf(false) }
     var generationProgress by remember { mutableStateOf(0f) }
-    var generatedKeys by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var sharedKey by remember { mutableStateOf<String?>(null) }
+    var sessionKey by remember { mutableStateOf<String?>(null) }
+    var payload by remember { mutableStateOf<String?>(null) }
     
-    // Get peer information
-    val peerPublicKey by viewModel.peerPublicKey.collectAsState()
-    val peerNodeId by viewModel.targetFusionNode.collectAsState()
+    // Get current device's public key and fusion node ID from ViewModel
     val currentPublicKey by viewModel.publicKey.collectAsState()
-    val currentFusionNode by viewModel.connectedFusionNode.collectAsState()
+    val currentFusionNodeId by viewModel.connectedFusionNode.collectAsState()
     
-    // Auto-start key generation when screen appears
+    // Start key generation when screen is displayed
     LaunchedEffect(Unit) {
-        if (peerPublicKey != null && peerNodeId != null) {
-            startAutomaticKeyGeneration()
-        }
-    }
-    
-    // Manual key generation option
-    LaunchedEffect(Unit) {
-        // If automatic generation doesn't start within 3 seconds, show manual option
-        delay(3000)
-        if (currentStep == 0 && !isGenerating) {
-            // Show manual generation option
-        }
-    }
-    
-    // Function to start automatic key generation
-    fun startAutomaticKeyGeneration() {
         isGenerating = true
-        currentStep = 0
-        generationProgress = 0f
         
-        CoroutineScope(Dispatchers.Main).launch {
-            // Step 1: Generate Shared Key
-            generateSharedKey()
-            delay(500) // Brief pause between steps
-            
-            // Step 2: Generate Session Key
-            generateSessionKey()
-            delay(500) // Brief pause between steps
-            
-            // Step 3: Generate Payload
-            generatePayload()
-            
-            isGenerating = false
+        // Generate Shared Key
+        repeat(100) {
+            delay(50)
+            generationProgress = (it + 1) / 100f
         }
-    }
-    
-    // Generate shared key
-    fun generateSharedKey() {
-        isGenerating = true
-        currentStep = 0
-        generationProgress = 0f
+        val timestamp1 = System.currentTimeMillis()
+        val randomBytes1 = ByteArray(32)
+        java.util.Random().nextBytes(randomBytes1)
+        sharedKey = "SHARED_${timestamp1}_${randomBytes1.joinToString("") { "%02x".format(it) }}"
         
-        CoroutineScope(Dispatchers.Main).launch {
-            repeat(100) {
-                delay(15)
-                generationProgress = (it + 1) / 100f
-            }
-            
-            // Generate a realistic shared key using peer's public key and our private key
-            val sharedKey = generateRealisticSharedKey(currentPublicKey, peerPublicKey)
-            generatedKeys = generatedKeys + ("sharedKey" to sharedKey)
-            
-            sharedKeyGenerated = true
-            currentStep = 1
-            isGenerating = false
+        // Generate Session Key
+        repeat(100) {
+            delay(30)
+            generationProgress = (it + 1) / 100f
         }
-    }
-    
-    // Generate realistic shared key
-    fun generateRealisticSharedKey(ourPublicKey: String?, peerPublicKey: String?): String {
-        if (ourPublicKey == null || peerPublicKey == null) {
-            return "ERROR: Missing keys"
-        }
+        val timestamp2 = System.currentTimeMillis()
+        val randomBytes2 = ByteArray(24)
+        java.util.Random().nextBytes(randomBytes2)
+        sessionKey = "SESSION_${timestamp2}_${randomBytes2.joinToString("") { "%02x".format(it) }}"
         
-        // Simulate ECDH key exchange
-        val combined = ourPublicKey + peerPublicKey
-        val hash = combined.hashCode().toString(16).uppercase()
-        return "SHARED_${hash.take(32)}"
-    }
-    
-    // Generate session key
-    fun generateSessionKey() {
-        isGenerating = true
-        currentStep = 1
-        generationProgress = 0f
-        
-        CoroutineScope(Dispatchers.Main).launch {
-            repeat(100) {
-                delay(15)
-                generationProgress = (it + 1) / 100f
-            }
-            
-            // Generate session key from shared key
-            val sharedKey = generatedKeys["sharedKey"] ?: "ERROR"
-            val sessionKey = generateRealisticSessionKey(sharedKey)
-            generatedKeys = generatedKeys + ("sessionKey" to sessionKey)
-            
-            sessionKeyGenerated = true
-            currentStep = 2
-            isGenerating = false
+        // Generate Payload
+        repeat(100) {
+            delay(20)
+            generationProgress = (it + 1) / 100f
         }
-    }
-    
-    // Generate realistic session key
-    fun generateRealisticSessionKey(sharedKey: String): String {
-        if (sharedKey.startsWith("ERROR")) {
-            return "ERROR: Invalid shared key"
-        }
+        val timestamp3 = System.currentTimeMillis()
+        val randomBytes3 = ByteArray(16)
+        java.util.Random().nextBytes(randomBytes3)
+        payload = "PAYLOAD_${timestamp3}_${randomBytes3.joinToString("") { "%02x".format(it) }}"
         
-        // Simulate HKDF derivation
-        val timestamp = System.currentTimeMillis()
-        val combined = sharedKey + timestamp.toString()
-        val hash = combined.hashCode().toString(16).uppercase()
-        return "SESSION_${hash.take(32)}"
-    }
-
-    // Generate payload
-    fun generatePayload() {
-        isGenerating = true
-        generationProgress = 0f
-        
-        CoroutineScope(Dispatchers.Main).launch {
-            repeat(100) {
-                delay(15)
-                generationProgress = (it + 1) / 100f
-            }
-            
-            // Generate final payload using all keys
-            val sharedKey = generatedKeys["sharedKey"] ?: "ERROR"
-            val sessionKey = generatedKeys["sessionKey"] ?: "ERROR"
-            val payload = generateRealisticPayload(sharedKey, sessionKey, currentFusionNode, peerNodeId)
-            generatedKeys = generatedKeys + ("payload" to payload)
-            
-            payloadGenerated = true
-            currentStep = 3
-            isGenerating = false
-        }
-    }
-    
-    // Generate realistic payload
-    fun generateRealisticPayload(sharedKey: String, sessionKey: String, ourNode: String?, peerNode: String?): String {
-        if (sharedKey.startsWith("ERROR") || sessionKey.startsWith("ERROR")) {
-            return "ERROR: Invalid keys"
-        }
-        
-        // Simulate encrypted payload creation
-        val timestamp = System.currentTimeMillis()
-        val nodeInfo = "${ourNode ?: "UNKNOWN"}_${peerNode ?: "UNKNOWN"}"
-        val combined = sharedKey + sessionKey + nodeInfo + timestamp.toString()
-        val hash = combined.hashCode().toString(16).uppercase()
-        return "PAYLOAD_${hash.take(48)}"
+        isGenerating = false
     }
 
     Box(
@@ -2709,8 +2335,8 @@ fun KeyGenerationScreen(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF581C87), // purple-900
                         Color(0xFF1E40AF), // blue-900
+                        Color(0xFF3730A3), // indigo-900
                         Color(0xFF000000)  // black
                     )
                 )
@@ -2720,26 +2346,42 @@ fun KeyGenerationScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(32.dp))
-
+            
             // Header
             Column(
             horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(RoundedCornerShape(40.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                    Color(0xFF22D3EE), // cyan-400
+                                    Color(0xFFA855F7)  // purple-500
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = "Key Generation Icon",
-                    tint = Color(0xFFC084FC), // purple-400
-                    modifier = Modifier.size(48.dp)
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
+                    Icon(
+                        imageVector = Icons.Default.VpnKey,
+                        contentDescription = "Key Generation Icon",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
             Text(
-                    text = "Key Generation Process",
+                    text = "Key Generation",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -2748,580 +2390,201 @@ fun KeyGenerationScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                    text = "Generating shared key, session key, and payload",
-                    fontSize = 16.sp,
-                    color = Color(0xFFC4B5FD) // purple-200
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Current Device Information Card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
-            Text(
-                        text = "Your Device Information",
-                        fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
+                    text = "Generating shared, session, and payload keys",
+                fontSize = 16.sp,
+                    color = Color(0xFFBFDBFE) // blue-200
             )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Current Fusion Node ID
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeviceHub,
-                            contentDescription = "Current Fusion Node ID",
-                            tint = Color(0xFF60A5FA), // blue-400
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-            Text(
-                            text = "Fusion Node ID: ${viewModel.getFusionNodeInfo()}",
-                            fontSize = 14.sp,
-                            color = Color(0xFFD1D5DB) // gray-300
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Peer Information Card
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    Text(
-                        text = "Peer Information",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // Peer Public Key
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Key,
-                            contentDescription = "Peer Public Key",
-                            tint = Color(0xFF34D399), // green-400
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                        Text(
-                            text = "Public Key: ${peerPublicKey?.take(20) ?: "Not set"}...",
-                            fontSize = 14.sp,
-                            color = Color(0xFFD1D5DB) // gray-300
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Peer Node ID
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeviceHub,
-                            contentDescription = "Peer Node ID",
-                            tint = Color(0xFF60A5FA), // blue-400
-                            modifier = Modifier.size(16.dp)
-                        )
-                        
-                        Spacer(modifier = Modifier.width(8.dp))
-                        
-                        Text(
-                            text = "Node ID: ${peerNodeId ?: "Not set"}",
-                            fontSize = 14.sp,
-                            color = Color(0xFFD1D5DB) // gray-300
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Generated Keys Display (only show when keys are generated)
-            if (generatedKeys.isNotEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF064E3B).copy(alpha = 0.3f)
-                    ),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = Color(0xFF34D399)
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "Generated Keys",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF34D399)
-                        )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        generatedKeys.forEach { (keyType, keyValue) ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Key,
-                                    contentDescription = keyType,
-                                    tint = Color(0xFF34D399),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                
-                                Spacer(modifier = Modifier.width(8.dp))
-                                
-                                Text(
-                                    text = "${keyType.replaceFirstChar { it.uppercase() }}:",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = Color.White,
-                                    modifier = Modifier.width(80.dp)
-                                )
-                                
-                                Text(
-                                    text = keyValue.take(20) + "...",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFD1D5DB),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                
-                                IconButton(
-                                    onClick = {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        val clip = ClipData.newPlainText(keyType, keyValue)
-                                        clipboard.setPrimaryClip(clip)
-                                        Toast.makeText(context, "$keyType copied!", Toast.LENGTH_SHORT).show()
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ContentCopy,
-                                        contentDescription = "Copy $keyType",
-                                        tint = Color(0xFF34D399),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            
-                            if (keyType != generatedKeys.keys.last()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-
-            // Key Generation Steps
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Step 1: Shared Key Generation
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (currentStep >= 1) Color(0xFF064E3B).copy(alpha = 0.3f) else Color(0xFF374151).copy(alpha = 0.5f)
-                    ),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = if (currentStep >= 1) Color(0xFF34D399) else Color(0xFF6B7280)
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (currentStep >= 1) Icons.Default.Check else Icons.Default.Key,
-                                    contentDescription = "Shared Key Icon",
-                                    tint = if (currentStep >= 1) Color(0xFF34D399) else Color(0xFF6B7280),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                
-                                Text(
-                                    text = "Step 1: Generate Shared Key",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (currentStep >= 1) Color(0xFF34D399) else Color.White
-                                )
-                            }
-                            
-                            if (currentStep >= 1) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Completed",
-                                    tint = Color(0xFF34D399),
-                            modifier = Modifier.size(20.dp)
-                        )
-                            }
-                        }
-                        
-                        if (currentStep == 0 && !isGenerating) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Button(
-                                onClick = { generateSharedKey() },
-                                enabled = !isGenerating,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF10B981)
-                                )
-                            ) {
-                                Text(text = "Generate Shared Key", color = Color.White)
-                            }
-                        }
-                        
-                        // Manual generation option if automatic failed
-                        if (currentStep == 0 && !isGenerating && generatedKeys.isEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            
-                            OutlinedButton(
-                                onClick = { generateSharedKey() },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color(0xFF10B981)
-                                ),
-                                border = BorderStroke(1.dp, Color(0xFF10B981))
-                            ) {
-                                Text(text = "Manual: Generate Shared Key", color = Color.White)
-                            }
-                        }
-                        
-                        if (isGenerating && currentStep == 0) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            LinearProgressIndicator(
-                                progress = generationProgress,
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF10B981)
-                            )
-                            
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                                text = "Generating shared key... ${(generationProgress * 100).toInt()}%",
-                                fontSize = 12.sp,
-                                color = Color(0xFF10B981)
-                            )
-                        }
-                    }
-                }
-
-                // Step 2: Session Key Generation
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (currentStep >= 2) Color(0xFF064E3B).copy(alpha = 0.3f) else Color(0xFF374151).copy(alpha = 0.5f)
-                    ),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = if (currentStep >= 2) Color(0xFF34D399) else Color(0xFF6B7280)
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                        Icon(
-                                    imageVector = if (currentStep >= 2) Icons.Default.Check else Icons.Default.Key,
-                                    contentDescription = "Session Key Icon",
-                                    tint = if (currentStep >= 2) Color(0xFF34D399) else Color(0xFF6B7280),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                
-                                Text(
-                                    text = "Step 2: Generate Session Key",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (currentStep >= 2) Color(0xFF34D399) else Color.White
-                                )
-                            }
-                            
-                            if (currentStep >= 2) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Completed",
-                                    tint = Color(0xFF34D399),
-                            modifier = Modifier.size(20.dp)
-                        )
-                            }
-                        }
-                        
-                        if (currentStep == 1 && !isGenerating) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Button(
-                                onClick = { generateSessionKey() },
-                                enabled = !isGenerating,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF3B82F6)
-                                )
-                            ) {
-                                Text(text = "Generate Session Key", color = Color.White)
-                            }
-                        }
-                        
-                        // Manual generation option if automatic failed
-                        if (currentStep == 1 && !isGenerating && !generatedKeys.containsKey("sessionKey")) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            
-                            OutlinedButton(
-                                onClick = { generateSessionKey() },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color(0xFF3B82F6)
-                                ),
-                                border = BorderStroke(1.dp, Color(0xFF3B82F6))
-                            ) {
-                                Text(text = "Manual: Generate Session Key", color = Color.White)
-                            }
-                        }
-                        
-                        if (isGenerating && currentStep == 1) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            LinearProgressIndicator(
-                                progress = generationProgress,
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF3B82F6)
-                            )
-                            
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                                text = "Generating session key... ${(generationProgress * 100).toInt()}%",
-                                fontSize = 12.sp,
-                                color = Color(0xFF3B82F6)
-                            )
-                        }
-                    }
-                }
-
-                // Step 3: Payload Generation
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (currentStep >= 3) Color(0xFF064E3B).copy(alpha = 0.3f) else Color(0xFF374151).copy(alpha = 0.5f)
-                    ),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = if (currentStep >= 3) Color(0xFF34D399) else Color(0xFF6B7280)
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                        Icon(
-                                    imageVector = if (currentStep >= 3) Icons.Default.Check else Icons.Default.Key,
-                                    contentDescription = "Payload Icon",
-                                    tint = if (currentStep >= 3) Color(0xFF34D399) else Color(0xFF6B7280),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                
-                                Text(
-                                    text = "Step 3: Generate Payload",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (currentStep >= 3) Color(0xFF34D399) else Color.White
-                                )
-                            }
-                            
-                            if (currentStep >= 3) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = "Completed",
-                                    tint = Color(0xFF34D399),
-                            modifier = Modifier.size(20.dp)
-                        )
-                            }
-                        }
-                        
-                        if (currentStep == 2 && !isGenerating) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Button(
-                                onClick = { generatePayload() },
-                                enabled = !isGenerating,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF8B5CF6)
-                                )
-                            ) {
-                                Text(text = "Generate Payload", color = Color.White)
-                            }
-                        }
-                        
-                        // Manual generation option if automatic failed
-                        if (currentStep == 2 && !isGenerating && !generatedKeys.containsKey("payload")) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            
-                            OutlinedButton(
-                                onClick = { generatePayload() },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color(0xFF8B5CF6)
-                                ),
-                                border = BorderStroke(1.dp, Color(0xFF8B5CF6))
-                            ) {
-                                Text(text = "Manual: Generate Payload", color = Color.White)
-                            }
-                        }
-                        
-                        if (isGenerating && currentStep == 2) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            LinearProgressIndicator(
-                                progress = generationProgress,
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color(0xFF8B5CF6)
-                            )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                                text = "Generating payload... ${(generationProgress * 100).toInt()}%",
-                        fontSize = 12.sp,
-                                color = Color(0xFF8B5CF6)
-                    )
-                        }
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            if (isGenerating) {
+                // Generation Progress
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
+                ),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                // Retry Button (if generation failed)
-                if (currentStep < 3 && !isGenerating) {
-                    Button(
-                        onClick = { startAutomaticKeyGeneration() },
+                Column(
+                        modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                        CircularProgressIndicator(
+                            progress = generationProgress,
+                            modifier = Modifier.size(80.dp),
+                            color = Color(0xFF3B82F6), // blue-500
+                            strokeWidth = 8.dp
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "Generating Keys...",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Text(
+                            text = "${(generationProgress * 100).toInt()}% Complete",
+                            fontSize = 14.sp,
+                            color = Color(0xFF9CA3AF) // gray-400
+                        )
+                    }
+                }
+            } else {
+                // Generated Keys Display
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Shared Key
+                    KeyDisplayCard(
+                        title = "Shared Key",
+                        key = sharedKey ?: "",
+                        color = Color(0xFF10B981) // green-500
+                    )
+                    
+                    // Session Key
+                    KeyDisplayCard(
+                        title = "Session Key",
+                        key = sessionKey ?: "",
+                        color = Color(0xFF3B82F6) // blue-500
+                    )
+                    
+                    // Payload
+                    KeyDisplayCard(
+                        title = "Payload",
+                        key = payload ?: "",
+                        color = Color(0xFF8B5CF6) // violet-500
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Continue Button
+                Button(
+                    onClick = onContinue,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Transparent
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFF59E0B)
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Retry",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color(0xFF10B981), // green-500
+                                        Color(0xFF3B82F6)  // blue-600
+                                    )
+                                ),
+                                RoundedCornerShape(16.dp)
                             )
+                ) {
+                    Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                                imageVector = Icons.Default.ArrowForward,
+                                contentDescription = "Continue Icon",
+                            tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                        )
                             
                             Spacer(modifier = Modifier.width(8.dp))
-                            
-                            Text(
-                                text = "Retry Generation",
-                                fontSize = 16.sp,
+
+                        Text(
+                                text = "Continue to Chat",
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = Color.White
                             )
                         }
                     }
                 }
-                
-                // Continue Button (only enabled when all steps are complete)
-                Button(
-                    onClick = onContinue,
-                    enabled = currentStep >= 3,
-                    modifier = Modifier
-                        .weight(if (currentStep < 3 && !isGenerating) 1f else 1f)
-                        .height(56.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (currentStep >= 3) Color.Transparent else Color(0xFF4B5563)
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
+            }
+        }
+    }
+}
+
+// Key Display Card Component
+@Composable
+fun KeyDisplayCard(
+    title: String,
+    key: String,
+    color: Color
+) {
+    val context = LocalContext.current
+    
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF374151).copy(alpha = 0.5f) // gray-800/50
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp)
+        ) {
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = color
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                text = key,
+                fontSize = 12.sp,
+                color = Color.White,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp)
+                    .background(
+                        Color(0xFF1F2937), // gray-800
+                        RoundedCornerShape(8.dp)
+                    )
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Copy Button
+            Button(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText(title, key)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "$title copied to clipboard", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Transparent
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            if (currentStep >= 3) {
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color(0xFF10B981), // green-500
-                                        Color(0xFF3B82F6)  // blue-600
-                                    )
+                            Brush.horizontalGradient(
+                                colors = listOf(
+                                    color,
+                                    color.copy(alpha = 0.8f)
                                 )
-                            } else {
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF4B5563), // gray-600
-                                        Color(0xFF4B5563)  // gray-600
-                                    )
-                                )
-                            },
-                            RoundedCornerShape(16.dp)
+                            ),
+                            RoundedCornerShape(8.dp)
                         )
                 ) {
                     Row(
@@ -3330,17 +2593,17 @@ fun KeyGenerationScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Continue Icon",
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy Icon",
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(14.dp)
                         )
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
 
-                        Text(
-                            text = if (currentStep >= 3) "Continue to Chat" else "Complete All Steps First",
-                            fontSize = 18.sp,
+                    Text(
+                            text = "Copy $title",
+                        fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White
                         )
@@ -3355,63 +2618,19 @@ fun KeyGenerationScreen(
 @Composable
 fun ChatScreen(
     selectedDevice: DeviceInfo?,
+    viewModel: SecureChatViewModel,
     onReset: () -> Unit
 ) {
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
     var newMessage by remember { mutableStateOf("") }
-    var isConnected by remember { mutableStateOf(true) }
-    var connectionStatus by remember { mutableStateOf("Connected") }
-    
-    // Get ViewModel for key information
-    val viewModel = LocalContext.current as? SecureChatViewModel
-    
-    // Initialize with welcome messages
+
+    // Sample messages
     LaunchedEffect(Unit) {
         messages = listOf(
-            ChatMessage("Secure connection established!", "system", "Now", true),
-            ChatMessage("Keys generated successfully. You can now send encrypted messages.", "system", "Now", true),
-            ChatMessage("Hello! This is a secure encrypted chat.", "you", "Now", true)
+            ChatMessage("Hello! How are you?", "you", "12:30 PM", true),
+            ChatMessage("I'm doing great! Thanks for asking.", "peer", "12:31 PM", true),
+            ChatMessage("This is a secure encrypted message.", "you", "12:32 PM", true)
         )
-    }
-    
-    // Function to send encrypted message
-    fun sendEncryptedMessage() {
-        if (newMessage.isNotBlank()) {
-            val timestamp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
-            val encryptedMessage = encryptMessage(newMessage)
-            
-            messages = messages + ChatMessage(
-                text = encryptedMessage,
-                sender = "you",
-                timestamp = timestamp,
-                encrypted = true,
-                originalText = newMessage
-            )
-            
-            newMessage = ""
-            
-            // Simulate peer response after a short delay
-            CoroutineScope(Dispatchers.Main).launch {
-                delay(1000 + (0..2000).random())
-                val peerResponse = "Message received and decrypted successfully!"
-                val peerTimestamp = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
-                
-                messages = messages + ChatMessage(
-                    text = peerResponse,
-                    sender = "peer",
-                    timestamp = peerTimestamp,
-                    encrypted = true
-                )
-            }
-        }
-    }
-    
-    // Function to encrypt message (simulate encryption)
-    fun encryptMessage(message: String): String {
-        val timestamp = System.currentTimeMillis()
-        val combined = message + timestamp.toString()
-        val hash = combined.hashCode().toString(16).uppercase()
-        return "ENC_${hash.take(16)}"
     }
 
     Column(
@@ -3426,63 +2645,6 @@ fun ChatScreen(
                 )
             )
     ) {
-        // Connection Status Bar
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF064E3B).copy(alpha = 0.8f) // green-900/80
-            ),
-            shape = RoundedCornerShape(0.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .background(
-                            color = Color(0xFF34D399),
-                            shape = CircleShape
-                        )
-                )
-                
-                Spacer(modifier = Modifier.width(8.dp))
-                
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SignalCellular4Bar,
-                        contentDescription = "Signal",
-                        tint = Color(0xFF34D399),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    
-                    Spacer(modifier = Modifier.width(4.dp))
-                    
-                    Text(
-                        text = "Secure Connection Active - All Keys Generated",
-                        fontSize = 12.sp,
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium
-                    )
-                    
-                    Spacer(modifier = Modifier.width(4.dp))
-                    
-                    Icon(
-                        imageVector = Icons.Default.Key,
-                        contentDescription = "Encryption",
-                        tint = Color(0xFF34D399),
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
-        }
-        
         // Header
         Card(
             colors = CardDefaults.cardColors(
@@ -3541,26 +2703,6 @@ fun ChatScreen(
                                 text = "Connected via ${selectedDevice?.name ?: "Unknown Device"}",
                                 fontSize = 12.sp,
                                 color = Color(0xFF34D399) // green-400
-                            )
-                        }
-                        
-                        Spacer(modifier = Modifier.height(2.dp))
-                        
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Key,
-                                contentDescription = "Encryption",
-                                tint = Color(0xFF34D399),
-                                modifier = Modifier.size(10.dp)
-                            )
-                            
-                            Text(
-                                text = "End-to-end encrypted",
-                                fontSize = 10.sp,
-                                color = Color(0xFF34D399)
                             )
                         }
                     }
@@ -3641,15 +2783,24 @@ fun ChatScreen(
                             focusedBorderColor = Color(0xFF3B82F6), // blue-500
                             unfocusedBorderColor = Color(0xFF4B5563), // gray-600
                             focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            cursorColor = Color(0xFFC084FC) // purple-400
+                            unfocusedTextColor = Color.White
                         ),
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true
                     )
 
-                                        IconButton(
-                        onClick = { sendEncryptedMessage() },
+                    IconButton(
+                        onClick = {
+                            if (newMessage.isNotBlank()) {
+                                messages = messages + ChatMessage(
+                                    newMessage,
+                                    "you",
+                                    "12:30 PM",
+                                    true
+                                )
+                                newMessage = ""
+                            }
+                        },
                         modifier = Modifier
                             .size(40.dp)
                             .background(
@@ -3657,8 +2808,8 @@ fun ChatScreen(
                                 shape = RoundedCornerShape(10.dp)
                             )
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                                 Icon(
+                             imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = "Send Message",
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
@@ -3668,25 +2819,12 @@ fun ChatScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Key,
-                        contentDescription = "Encryption",
-                        tint = Color(0xFF34D399),
-                        modifier = Modifier.size(12.dp)
-                    )
-                    
-                    Spacer(modifier = Modifier.width(4.dp))
-                    
-                    Text(
-                        text = "End-to-end encrypted via fusion node relay",
-                        fontSize = 12.sp,
-                        color = Color(0xFF9CA3AF), // gray-400
-                    )
-                }
+                Text(
+                    text = "End-to-end encrypted via fusion node relay",
+                    fontSize = 12.sp,
+                    color = Color(0xFF9CA3AF), // gray-400
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
             }
         }
     }
@@ -3696,7 +2834,6 @@ fun ChatScreen(
 @Composable
 fun ChatMessageItem(message: ChatMessage) {
     val isFromUser = message.sender == "you"
-    val isSystemMessage = message.sender == "system"
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -3705,26 +2842,15 @@ fun ChatMessageItem(message: ChatMessage) {
         Card(
             modifier = Modifier.widthIn(max = 280.dp),
             colors = CardDefaults.cardColors(
-                containerColor = when {
-                    isSystemMessage -> Color(0xFF7C3AED) // purple-600 for system messages
-                    isFromUser -> Color(0xFF2563EB) // blue-600 for user messages
-                    else -> Color(0xFF4B5563) // gray-600 for peer messages
-                }
+                containerColor = if (isFromUser) Color(0xFF2563EB) else Color(0xFF4B5563) // blue-600 or gray-600
             ),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(
                 modifier = Modifier.padding(12.dp)
             ) {
-                // Show original text if available, otherwise show encrypted text
-                val displayText = if (message.originalText != null && isFromUser) {
-                    message.originalText
-                } else {
-                    message.text
-                }
-                
                 Text(
-                    text = displayText,
+                    text = message.text,
                     fontSize = 14.sp,
                     color = Color.White
                 )
@@ -3735,9 +2861,9 @@ fun ChatMessageItem(message: ChatMessage) {
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (message.encrypted && !isSystemMessage) {
+                    if (message.encrypted) {
                         Icon(
-                            imageVector = Icons.Default.Key,
+                            imageVector = Icons.Default.VpnKey,
                             contentDescription = "Encrypted",
                             tint = Color.White.copy(alpha = 0.7f),
                             modifier = Modifier.size(12.dp)
@@ -3750,17 +2876,6 @@ fun ChatMessageItem(message: ChatMessage) {
                         color = Color.White.copy(alpha = 0.7f)
                     )
                 }
-                
-                // Show encrypted hash for user messages
-                if (isFromUser && message.originalText != null) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Encrypted: ${message.text}",
-                        fontSize = 10.sp,
-                        color = Color.White.copy(alpha = 0.6f),
-                        fontStyle = FontStyle.Italic
-                    )
-                }
             }
         }
     }
@@ -3771,8 +2886,7 @@ data class ChatMessage(
     val text: String,
     val sender: String,
     val timestamp: String,
-    val encrypted: Boolean,
-    val originalText: String? = null
+    val encrypted: Boolean
 )
 
 // Connection Status Screen
@@ -4097,7 +3211,7 @@ fun ConnectionStatusScreen(
                             )
 
                             Text(
-                                                                 text = "Please connect to a $connectionType device or network before proceeding. You cannot move forward without an active connection.",
+                                text = "Please connect to a $connectionType device or network before proceeding. You cannot move forward without an active connection.",
                                 fontSize = 14.sp,
                                 color = Color(0xFFFED7AA) // orange-200
                             )

@@ -454,7 +454,7 @@ fun getProofTypeIcon(proofType: ProofType): androidx.compose.ui.graphics.vector.
     return when (proofType) {
         ProofType.PING_PONG -> Icons.Default.RadioButtonChecked
         ProofType.ECHO_TEST -> Icons.Default.Refresh
-        ProofType.KEY_EXCHANGE -> Icons.Default.Key
+        ProofType.KEY_EXCHANGE -> Icons.Default.VpnKey
         ProofType.MESSAGE_DELIVERY -> Icons.Default.Message
         ProofType.SIGNAL_STRENGTH -> Icons.Default.SignalCellular4Bar
         ProofType.BANDWIDTH_TEST -> Icons.Default.Speed

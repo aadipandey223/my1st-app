@@ -126,6 +126,76 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         }
     }
     
+    // Encrypt message with secure random nonce (for critical operations)
+    fun encryptMessageSecure(
+        session: Session,
+        message: String,
+        destinationId: Int
+    ): ByteArray? {
+        if (!session.isEstablished) {
+            Log.e(TAG, "Session ${session.id} not established")
+            return null
+        }
+        
+        return try {
+            // Validate input
+            require(message.isNotEmpty()) { "Message cannot be empty" }
+            
+            // Compress message if needed
+            val messageBytes = message.toByteArray()
+            val compressed = cryptoManager.compressData(messageBytes)
+            val isCompressed = compressed.size < messageBytes.size
+            
+            // Prepare payload
+            val payload = if (isCompressed) {
+                Payload(
+                    contentType = ContentType.TEXT,
+                    isCompressed = true,
+                    originalSize = messageBytes.size,
+                    data = compressed
+                )
+            } else {
+                Payload(
+                    contentType = ContentType.TEXT,
+                    isCompressed = false,
+                    originalSize = messageBytes.size,
+                    data = messageBytes
+                )
+            }
+            
+            // Use secure random nonce for critical operations
+            val sequence = session.sendCounter.incrementAndGet()
+            val nonce = cryptoManager.generateSecureNonce()
+            
+            Log.d(TAG, "Encrypting message with secure nonce, sequence $sequence for session ${session.id}")
+            
+            // Prepare payload bytes
+            val payloadBytes = payload.toByteArray()
+            
+            // Encrypt payload with minimal AAD
+            val aad = createSimpleAAD(session, destinationId, isCompressed)
+            val txKey = session.txKey ?: throw IllegalStateException("Session not established")
+            val encryptionResult = cryptoManager.encryptWithAAD(
+                txKey,
+                payloadBytes,
+                aad,
+                nonce
+            )
+            
+            Log.d(TAG, "Successfully encrypted message with secure nonce")
+            encryptionResult.ciphertext
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Invalid input for encryption: ${e.message}", e)
+            null
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "Session state error during encryption: ${e.message}", e)
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to encrypt message with secure nonce: ${e.message}", e)
+            null
+        }
+    }
+    
     // Decrypt frame and extract message (legacy - kept for backward compatibility)
     fun decryptMessage(session: Session, frame: Frame): String? {
         if (!session.isEstablished) {
@@ -167,7 +237,7 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         }
     }
     
-    // Decrypt message from ByteArray (for received messages) - simplified approach
+    // Decrypt message from ByteArray (for received messages) - improved approach
     fun decryptMessage(session: Session, encryptedData: ByteArray): String? {
         if (!session.isEstablished) {
             Log.e(TAG, "Session ${session.id} not established")
@@ -175,6 +245,9 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         }
         
         return try {
+            // Validate input
+            require(encryptedData.isNotEmpty()) { "Encrypted data cannot be empty" }
+            
             // Try to parse as Frame first (legacy support)
             val frame = Frame.fromByteArray(encryptedData)
             if (frame != null) {
@@ -184,8 +257,11 @@ class SessionManager(private val cryptoManager: CryptoManager) {
             // For new simplified approach, decrypt directly
             val rxKey = session.rxKey ?: throw IllegalStateException("Session not established")
             
-            // Generate nonce from session info (simplified approach)
-            val nonce = cryptoManager.generateNonce(session.id, deviceId, 0)
+            // Use the receive counter for proper sequence tracking
+            val sequence = session.receiveCounter.incrementAndGet()
+            val nonce = cryptoManager.generateNonce(session.id, deviceId, sequence)
+            
+            Log.d(TAG, "Decrypting message with sequence $sequence for session ${session.id}")
             
             // Decrypt the encrypted data directly
             val decrypted = cryptoManager.decryptWithAAD(
@@ -204,13 +280,21 @@ class SessionManager(private val cryptoManager: CryptoManager) {
                 } else {
                     payload.data
                 }
+                Log.d(TAG, "Successfully decrypted payload message")
                 return String(finalData)
             }
             
             // If not a payload, return as plain text
+            Log.d(TAG, "Successfully decrypted plain text message")
             String(decrypted)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Invalid input for decryption: ${e.message}", e)
+            null
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "Session state error during decryption: ${e.message}", e)
+            null
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to decrypt message from ByteArray", e)
+            Log.e(TAG, "Failed to decrypt message from ByteArray: ${e.message}", e)
             null
         }
     }

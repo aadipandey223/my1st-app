@@ -132,25 +132,37 @@ class CryptoManager(private val context: Context) {
         }
     }
     
-    // AES-GCM Encryption with AAD
+    // AES-GCM Encryption with AAD - improved error handling
     fun encryptWithAAD(
         sessionKey: ByteArray,
         plaintext: ByteArray,
         aad: ByteArray,
         nonce: ByteArray
     ): EncryptionResult {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val keySpec = SecretKeySpec(sessionKey, "AES")
-        val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH * 8, nonce)
-        
-        cipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec)
-        cipher.updateAAD(aad)
-        
-        val ciphertext = cipher.doFinal(plaintext)
-        return EncryptionResult(ciphertext, cipher.iv)
+        return try {
+            // Validate inputs
+            require(sessionKey.size == 32) { "Session key must be 32 bytes (256 bits)" }
+            require(plaintext.isNotEmpty()) { "Plaintext cannot be empty" }
+            require(nonce.size == 12) { "Nonce must be 12 bytes for AES-GCM" }
+            
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = SecretKeySpec(sessionKey, "AES")
+            val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH * 8, nonce)
+            
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec)
+            cipher.updateAAD(aad)
+            
+            val ciphertext = cipher.doFinal(plaintext)
+            
+            android.util.Log.d("CryptoManager", "Encrypted ${plaintext.size} bytes to ${ciphertext.size} bytes")
+            EncryptionResult(ciphertext, cipher.iv)
+        } catch (e: Exception) {
+            android.util.Log.e("CryptoManager", "Encryption failed: ${e.message}", e)
+            throw e
+        }
     }
     
-    // AES-GCM Decryption with AAD
+    // AES-GCM Decryption with AAD - improved error handling
     fun decryptWithAAD(
         sessionKey: ByteArray,
         ciphertext: ByteArray,
@@ -158,6 +170,11 @@ class CryptoManager(private val context: Context) {
         nonce: ByteArray
     ): ByteArray? {
         return try {
+            // Validate inputs
+            require(sessionKey.size == 32) { "Session key must be 32 bytes (256 bits)" }
+            require(ciphertext.isNotEmpty()) { "Ciphertext cannot be empty" }
+            require(nonce.size == 12) { "Nonce must be 12 bytes for AES-GCM" }
+            
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             val keySpec = SecretKeySpec(sessionKey, "AES")
             val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH * 8, nonce)
@@ -165,28 +182,78 @@ class CryptoManager(private val context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
             cipher.updateAAD(aad)
             
-            cipher.doFinal(ciphertext)
+            val plaintext = cipher.doFinal(ciphertext)
+            
+            android.util.Log.d("CryptoManager", "Decrypted ${ciphertext.size} bytes to ${plaintext.size} bytes")
+            plaintext
+        } catch (e: javax.crypto.AEADBadTagException) {
+            android.util.Log.e("CryptoManager", "Decryption failed - authentication tag mismatch", e)
+            null
+        } catch (e: javax.crypto.BadPaddingException) {
+            android.util.Log.e("CryptoManager", "Decryption failed - bad padding", e)
+            null
+        } catch (e: javax.crypto.IllegalBlockSizeException) {
+            android.util.Log.e("CryptoManager", "Decryption failed - illegal block size", e)
+            null
         } catch (e: Exception) {
+            android.util.Log.e("CryptoManager", "Decryption failed: ${e.message}", e)
             null
         }
     }
     
-    // Generate unique nonce
+    // Generate unique nonce with improved security
     fun generateNonce(sessionId: Int, senderId: Int, sequence: Int): ByteArray {
-        val nonce = ByteArray(12)
-        nonce[0] = (sessionId shr 24).toByte()
-        nonce[1] = (sessionId shr 16).toByte()
-        nonce[2] = (sessionId shr 8).toByte()
-        nonce[3] = sessionId.toByte()
-        nonce[4] = (senderId shr 24).toByte()
-        nonce[5] = (senderId shr 16).toByte()
-        nonce[6] = (senderId shr 8).toByte()
-        nonce[7] = senderId.toByte()
-        nonce[8] = (sequence shr 24).toByte()
-        nonce[9] = (sequence shr 16).toByte()
-        nonce[10] = (sequence shr 8).toByte()
-        nonce[11] = sequence.toByte()
-        return nonce
+        return try {
+            // Validate inputs
+            require(sessionId > 0) { "Session ID must be positive" }
+            require(senderId > 0) { "Sender ID must be positive" }
+            require(sequence >= 0) { "Sequence must be non-negative" }
+            
+            val nonce = ByteArray(12)
+            
+            // Use first 8 bytes for deterministic part (session + sender + sequence)
+            nonce[0] = (sessionId shr 24).toByte()
+            nonce[1] = (sessionId shr 16).toByte()
+            nonce[2] = (sessionId shr 8).toByte()
+            nonce[3] = sessionId.toByte()
+            nonce[4] = (senderId shr 24).toByte()
+            nonce[5] = (senderId shr 16).toByte()
+            nonce[6] = (senderId shr 8).toByte()
+            nonce[7] = senderId.toByte()
+            nonce[8] = (sequence shr 24).toByte()
+            nonce[9] = (sequence shr 16).toByte()
+            nonce[10] = (sequence shr 8).toByte()
+            nonce[11] = sequence.toByte()
+            
+            // Add some entropy to prevent predictability
+            // In production, consider using SecureRandom for the last 4 bytes
+            val entropy = (System.nanoTime() % 0xFFFFFFFFL).toInt()
+            nonce[8] = (nonce[8].toInt() xor (entropy shr 24)).toByte()
+            nonce[9] = (nonce[9].toInt() xor (entropy shr 16)).toByte()
+            nonce[10] = (nonce[10].toInt() xor (entropy shr 8)).toByte()
+            nonce[11] = (nonce[11].toInt() xor entropy).toByte()
+            
+            android.util.Log.d("CryptoManager", "Generated nonce for session=$sessionId, sender=$senderId, seq=$sequence")
+            nonce
+        } catch (e: Exception) {
+            android.util.Log.e("CryptoManager", "Failed to generate nonce", e)
+            throw e
+        }
+    }
+    
+    // Generate cryptographically secure random nonce
+    fun generateSecureNonce(): ByteArray {
+        return try {
+            val nonce = ByteArray(12)
+            val secureRandom = java.security.SecureRandom()
+            secureRandom.nextBytes(nonce)
+            
+            android.util.Log.d("CryptoManager", "Generated secure random nonce")
+            nonce
+        } catch (e: Exception) {
+            android.util.Log.e("CryptoManager", "Failed to generate secure nonce", e)
+            throw e
+        }
     }
     
     // Secure key storage in Android Keystore
