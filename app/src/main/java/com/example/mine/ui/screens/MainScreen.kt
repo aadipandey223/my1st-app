@@ -1889,6 +1889,17 @@ fun ManualKeyInputScreen(
     // Get current device's public key and fusion node ID from ViewModel
     val currentPublicKey by viewModel.publicKey.collectAsState()
     val currentFusionNodeId by viewModel.connectedFusionNode.collectAsState()
+    
+    // Debug: Log fusion node ID changes
+    LaunchedEffect(currentFusionNodeId) {
+        Log.d("ManualKeyInputScreen", "Fusion Node ID changed: $currentFusionNodeId")
+    }
+    
+    // Ensure fusion node ID is preserved when screen is displayed
+    LaunchedEffect(Unit) {
+        Log.d("ManualKeyInputScreen", "Screen displayed, checking fusion node ID")
+        viewModel.ensureFusionNodeIdPreserved()
+    }
 
     Box(
         modifier = Modifier
@@ -2104,6 +2115,17 @@ fun ManualKeyInputScreen(
                                 )
                         )
                         
+                        // Debug: Show raw state value
+                        Text(
+                            text = "Debug: ViewModel state = '${viewModel.connectedFusionNode.value}'",
+                            fontSize = 10.sp,
+                            color = Color(0xFFFBBF24), // yellow-400
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp)
+                        )
+                        
                         Spacer(modifier = Modifier.height(8.dp))
                         
                         // Copy Fusion Node ID Button
@@ -2156,6 +2178,60 @@ fun ManualKeyInputScreen(
                                     Text(
                                         text = "Copy Node ID",
                                         fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        // Refresh Fusion Node ID Button
+                        Button(
+                            onClick = {
+                                viewModel.debugCurrentState()
+                                viewModel.ensureFusionNodeIdPreserved()
+                                Toast.makeText(context, "Refreshed fusion node state", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(32.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFFF59E0B), // amber-500
+                                                Color(0xFFEF4444)  // red-500
+                                            )
+                                        ),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Refresh Icon",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+
+                                    Text(
+                                        text = "Refresh State",
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = Color.White
                                     )
@@ -2315,6 +2391,59 @@ fun ManualKeyInputScreen(
                                     else 
                                         "Enter Both Fields to Continue",
                                     fontSize = 18.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // Set Test Fusion Node ID Button (for debugging)
+                    Button(
+                        onClick = {
+                            viewModel.setFusionNodeId("E32-S3-01")
+                            Toast.makeText(context, "Set test fusion node ID", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color(0xFF10B981), // green-500
+                                            Color(0xFF3B82F6)  // blue-500
+                                        )
+                                    ),
+                                    RoundedCornerShape(8.dp)
+                                )
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Set Test Icon",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Text(
+                                    text = "Set Test Node ID (E32-S3-01)",
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = Color.White
                                 )

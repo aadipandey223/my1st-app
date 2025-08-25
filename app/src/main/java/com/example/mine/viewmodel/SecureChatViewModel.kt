@@ -2161,6 +2161,25 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         Log.d(TAG, "=== END DEBUG ===")
     }
     
+    // Function to ensure fusion node ID is preserved
+    fun ensureFusionNodeIdPreserved() {
+        Log.d(TAG, "🔒 Ensuring fusion node ID is preserved")
+        val currentId = _connectedFusionNode.value
+        if (currentId != null) {
+            Log.d(TAG, "✅ Fusion node ID preserved: $currentId")
+        } else {
+            Log.w(TAG, "⚠️ No fusion node ID to preserve")
+            // Try to restore from TCP manager if available
+            val tcpNodeId = tcpManager.getCurrentNodeId()
+            if (tcpNodeId != null) {
+                Log.d(TAG, "🔄 Restoring fusion node ID from TCP manager: $tcpNodeId")
+                _connectedFusionNode.value = tcpNodeId
+            } else {
+                Log.w(TAG, "❌ No fusion node ID available from any source")
+            }
+        }
+    }
+    
     // Set a fallback node ID when no real node ID is received
     fun setFallbackNodeId() {
         val fallbackId = "FN_${System.currentTimeMillis() % 10000}"
@@ -2168,6 +2187,17 @@ class SecureChatViewModel(private val context: Context) : ViewModel() {
         _connectedFusionNode.value = fallbackId
         _tcpConnectionStatus.value = TcpConnectionStatus.ConnectedWithNodeId(fallbackId)
         _isListeningForNodeId.value = false
+    }
+    
+    // Public function to manually set fusion node ID
+    fun setFusionNodeId(nodeId: String) {
+        Log.d(TAG, "🎯 Manually setting fusion node ID: $nodeId")
+        _connectedFusionNode.value = nodeId
+    }
+    
+    // Function to get current fusion node ID
+    fun getCurrentFusionNodeId(): String? {
+        return _connectedFusionNode.value
     }
     
     // Observe TCP connection status and automatically update fusion node when Node ID is received
