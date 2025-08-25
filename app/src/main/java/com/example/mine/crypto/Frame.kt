@@ -3,6 +3,11 @@ package com.example.mine.crypto
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/**
+ * Legacy Frame data structure for complex message wrapping
+ * NOTE: This is kept for backward compatibility. New implementations should use
+ * the simplified approach: [fusion_id_len | fusion_id | encrypted_message]
+ */
 data class Frame(
     val version: Byte = 1,
     val type: Byte,

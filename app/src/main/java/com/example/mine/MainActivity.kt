@@ -1,6 +1,7 @@
 package com.example.mine
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -18,10 +19,13 @@ import androidx.core.content.ContextCompat
 import com.example.mine.ui.screens.ModernMainScreen
 import com.example.mine.ui.theme.MineTheme
 import com.example.mine.utils.PermissionManager
+import com.example.mine.viewmodel.SecureChatViewModel
+import com.example.mine.callback.ConnectionCallback
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), ConnectionCallback {
     
     private lateinit var permissionManager: PermissionManager
+    private lateinit var secureChatViewModel: SecureChatViewModel
     
     // Permission request launcher
     private val permissionLauncher = registerForActivityResult(
@@ -36,8 +40,20 @@ class MainActivity : ComponentActivity() {
         // Initialize permission manager
         permissionManager = PermissionManager(this)
         
+        // Initialize ViewModel
+        secureChatViewModel = SecureChatViewModel(this)
+        
+        // Register this activity as the connection callback
+        secureChatViewModel.setConnectionCallback(this)
+        
+        // Reset app state to ensure clean start
+        secureChatViewModel.resetAppState()
+        
         // Check and request permissions if needed
         checkAndRequestPermissions()
+        
+        // Note: State observation is now handled in the ViewModel's init block
+        // to avoid coroutine scope issues in the Activity
         
         enableEdgeToEdge()
         setContent {
@@ -51,6 +67,48 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    
+    override fun onResume() {
+        super.onResume()
+        
+        Log.d("MainActivity", "onResume() called")
+        
+        // Only check for connections if we're in discovery mode
+        // This prevents the app from jumping to connection screen on startup
+        Log.d("MainActivity", "Checking if in discovery mode before calling checkConnectionStatus()")
+        secureChatViewModel.checkConnectionStatus()
+        Log.d("MainActivity", "checkConnectionStatus() call completed")
+    }
+    
+    // Implementation of ConnectionCallback
+    override fun onConnectionDetected(nodeName: String) {
+        try {
+            Log.d("MainActivity", "=== Connection detected: $nodeName ===")
+            
+            // Bring app to foreground
+            val intent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            
+            startActivity(intent)
+            
+            // Set window flags to ensure app is visible
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+            }
+            
+            Log.d("MainActivity", "App brought to foreground successfully")
+            
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to bring app to foreground", e)
+        }
+    }
+    
+
     
     private fun checkAndRequestPermissions() {
         val requiredPermissions = mutableListOf<String>()

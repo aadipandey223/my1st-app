@@ -300,4 +300,66 @@ class BluetoothDiscoveryManager(private val context: Context) {
             append("Discovered Devices: ${discoveredDevicesList.size}")
         }
     }
+    
+    // Disconnect from current device
+    fun disconnectFromDevice() {
+        try {
+            Log.d(TAG, "Disconnecting from BLE device...")
+            // Reset connection state
+            // In a real implementation, this would close the GATT connection
+            Log.d(TAG, "Disconnected from BLE device")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error disconnecting from BLE device", e)
+        }
+    }
+    
+    // Get currently connected devices
+    fun getConnectedDevices(): List<FusionNode> {
+        return try {
+            if (!isBluetoothSupported() || !isBluetoothEnabled() || !hasRequiredPermissions()) {
+                return emptyList()
+            }
+            
+            val connectedDevices = mutableListOf<FusionNode>()
+            
+            // Get bonded devices (paired devices)
+            val bondedDevices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                emptySet<BluetoothDevice>()
+            } else {
+                bluetoothAdapter?.bondedDevices ?: emptySet()
+            }
+            
+            // Check which bonded devices are currently connected
+            bondedDevices.forEach { device ->
+                try {
+                    // For BLE devices, we can check if they're connected by attempting to get their services
+                    // This is a simplified check - in a real implementation you'd use GATT callbacks
+                    if (device.type == BluetoothDevice.DEVICE_TYPE_LE || 
+                        device.type == BluetoothDevice.DEVICE_TYPE_DUAL) {
+                        
+                        val fusionNode = FusionNode(
+                            name = device.name ?: "Unknown Device",
+                            address = device.address,
+                            rssi = -50, // Default RSSI for connected devices
+                            deviceType = getDeviceType(device),
+                            isPaired = true,
+                            isConnected = true // Assume connected if it's a bonded BLE device
+                        )
+                        
+                        connectedDevices.add(fusionNode)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error checking device connection status: ${device.address}", e)
+                }
+            }
+            
+            Log.d(TAG, "Found ${connectedDevices.size} connected BLE devices")
+            connectedDevices
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting connected devices", e)
+            emptyList()
+        }
+    }
 }

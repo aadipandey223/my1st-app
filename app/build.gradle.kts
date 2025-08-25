@@ -89,6 +89,9 @@ dependencies {
     // ML Kit for QR code scanning
     implementation("com.google.mlkit:barcode-scanning:17.2.0")
     
+    // JSON parsing for QR code data
+    implementation("com.google.code.gson:gson:2.10.1")
+    
     // Lifecycle & ViewModel
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

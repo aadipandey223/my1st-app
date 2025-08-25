@@ -196,8 +196,21 @@ class WifiManager(private val context: Context) {
     
     // Handle received message
     private fun handleReceivedMessage(message: ByteArray) {
-        Log.d(TAG, "Received message via WiFi: ${message.size} bytes")
-        // Process the message - this would typically go to a message handler
+        Log.d(TAG, "WiFi received message: ${message.size} bytes")
+        
+        // Forward to ViewModel for processing
+        messageCallback?.onMessageReceived(message)
+    }
+    
+    // Callback interface for message handling
+    interface MessageCallback {
+        fun onMessageReceived(message: ByteArray)
+    }
+    
+    private var messageCallback: MessageCallback? = null
+    
+    fun setMessageCallback(callback: MessageCallback?) {
+        messageCallback = callback
     }
     
     // Send message via WiFi

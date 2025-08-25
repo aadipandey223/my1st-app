@@ -124,10 +124,10 @@ class SecureCommunicationTest {
         val parsedFrame = Frame.fromByteArray(frameBytes)
         
         assertNotNull("Parsed frame should not be null", parsedFrame)
-        assertEquals("Source ID should match", frame.sourceId, parsedFrame.sourceId)
-        assertEquals("Destination ID should match", frame.destinationId, parsedFrame.destinationId)
-        assertEquals("Session ID should match", frame.sessionId, parsedFrame.sessionId)
-        assertEquals("Sequence should match", frame.sequence, parsedFrame.sequence)
+        assertEquals("Source ID should match", frame.sourceId, parsedFrame!!.sourceId)
+        assertEquals("Destination ID should match", frame.destinationId, parsedFrame!!.destinationId)
+        assertEquals("Session ID should match", frame.sessionId, parsedFrame!!.sessionId)
+        assertEquals("Sequence should match", frame.sequence, parsedFrame!!.sequence)
     }
     
     @Test
@@ -165,13 +165,13 @@ class SecureCommunicationTest {
         
         // Test message encryption
         val testMessage = "Hello, this is a test message for encryption!"
-        val frame = sessionManager.encryptMessage(session, testMessage, 2)
+        val encryptedMessage = sessionManager.encryptMessage(session, testMessage, 2)
         
-        assertNotNull("Encrypted frame should not be null", frame)
-        assertEquals("Frame type should be DATA", FrameType.DATA.value, frame.type)
+        assertNotNull("Encrypted message should not be null", encryptedMessage)
+        assertTrue("Encrypted message should not be empty", encryptedMessage!!.isNotEmpty())
         
         // Test message decryption
-        val decryptedMessage = sessionManager.decryptMessage(session, frame)
+        val decryptedMessage = sessionManager.decryptMessage(session, encryptedMessage)
         
         assertNotNull("Decrypted message should not be null", decryptedMessage)
         assertEquals("Decrypted message should match original", testMessage, decryptedMessage)
@@ -190,19 +190,24 @@ class SecureCommunicationTest {
         val session = sessionManager.createSession(keyPair2.public)
         sessionManager.establishSessionKeys(session, keyPair1, keyPair2.public)
         
-        // Create first frame
-        val frame1 = sessionManager.encryptMessage(session, "Message 1", 2)
-        assertNotNull("First frame should not be null", frame1)
+        // Create first encrypted message
+        val encryptedMessage1 = sessionManager.encryptMessage(session, "Message 1", 2)
+        assertNotNull("First encrypted message should not be null", encryptedMessage1)
         
-        // Create second frame
-        val frame2 = sessionManager.encryptMessage(session, "Message 2", 2)
-        assertNotNull("Second frame should not be null", frame2)
+        // Create second encrypted message
+        val encryptedMessage2 = sessionManager.encryptMessage(session, "Message 2", 2)
+        assertNotNull("Second encrypted message should not be null", encryptedMessage2)
         
-        // Verify sequence numbers are different
-        assertNotEquals("Sequence numbers should be different", frame1.sequence, frame2.sequence)
+        // Verify encrypted messages are different (due to different nonces)
+        assertNotEquals("Encrypted messages should be different", 
+                       encryptedMessage1!!.contentHashCode(), 
+                       encryptedMessage2!!.contentHashCode())
         
-        // Verify second frame has higher sequence
-        assertTrue("Second frame should have higher sequence", frame2.sequence > frame1.sequence)
+        // Verify both messages can be decrypted
+        val decrypted1 = sessionManager.decryptMessage(session, encryptedMessage1)
+        val decrypted2 = sessionManager.decryptMessage(session, encryptedMessage2)
+        assertEquals("First message should decrypt correctly", "Message 1", decrypted1)
+        assertEquals("Second message should decrypt correctly", "Message 2", decrypted2)
     }
     
     @Test
@@ -330,9 +335,9 @@ class SecureCommunicationTest {
         val parsedPayload = Payload.fromByteArray(payloadBytes)
         
         assertNotNull("Parsed payload should not be null", parsedPayload)
-        assertEquals("Content type should match", payload.contentType, parsedPayload.contentType)
-        assertEquals("Compression flag should match", payload.isCompressed, parsedPayload.isCompressed)
-        assertEquals("Original size should match", payload.originalSize, parsedPayload.originalSize)
-        assertArrayEquals("Data should match", payload.data, parsedPayload.data)
+        assertEquals("Content type should match", payload.contentType, parsedPayload!!.contentType)
+        assertEquals("Compression flag should match", payload.isCompressed, parsedPayload!!.isCompressed)
+        assertEquals("Original size should match", payload.originalSize, parsedPayload!!.originalSize)
+        assertArrayEquals("Data should match", payload.data, parsedPayload!!.data)
     }
 }

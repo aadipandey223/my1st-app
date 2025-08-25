@@ -6,7 +6,8 @@ data class FusionNode(
     val rssi: Int,
     val deviceType: String = "Unknown",
     val isPaired: Boolean = false,
-    val isConnected: Boolean = false
+    val isConnected: Boolean = false,
+    val type: String = "Unknown" // Added type property with default value
 ) {
     // Get signal strength description
     fun getSignalStrength(): String {

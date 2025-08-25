@@ -33,7 +33,8 @@ import java.util.*
 fun ChatScreen(
     messages: List<Message>,
     onSendMessage: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onShowCommunicationProof: () -> Unit = {}
 ) {
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -63,7 +64,10 @@ fun ChatScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             // Chat Header
-            ChatHeader(onBack = onBack)
+            ChatHeader(
+                onBack = onBack,
+                onShowCommunicationProof = onShowCommunicationProof
+            )
             
             // Messages List
             LazyColumn(
@@ -99,7 +103,10 @@ fun ChatScreen(
 }
 
 @Composable
-fun ChatHeader(onBack: () -> Unit) {
+fun ChatHeader(
+    onBack: () -> Unit,
+    onShowCommunicationProof: () -> Unit = {}
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -140,12 +147,26 @@ fun ChatHeader(onBack: () -> Unit) {
             
             Spacer(modifier = Modifier.weight(1f))
             
-            Icon(
-                imageVector = Icons.Default.Shield,
-                contentDescription = "Secure",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onShowCommunicationProof) {
+                    Icon(
+                        imageVector = Icons.Default.Verified,
+                        contentDescription = "Communication Proof",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                
+                Icon(
+                    imageVector = Icons.Default.Shield,
+                    contentDescription = "Secure",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

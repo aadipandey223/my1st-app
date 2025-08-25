@@ -84,12 +84,12 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         }
     }
     
-    // Encrypt message and create frame
+    // Encrypt message and return encrypted data (simplified - no Frame)
     fun encryptMessage(
         session: Session,
         message: String,
         destinationId: Int
-    ): Frame? {
+    ): ByteArray? {
         if (!session.isEstablished) {
             Log.e(TAG, "Session ${session.id} not established")
             return null
@@ -118,15 +118,15 @@ class SessionManager(private val cryptoManager: CryptoManager) {
                 )
             }
             
-            // Create frame
-            createFrame(session, payload, destinationId, isCompressed)
+            // Encrypt payload directly (no Frame wrapper)
+            encryptPayload(session, payload, destinationId, isCompressed)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to encrypt message", e)
             null
         }
     }
     
-    // Decrypt frame and extract message
+    // Decrypt frame and extract message (legacy - kept for backward compatibility)
     fun decryptMessage(session: Session, frame: Frame): String? {
         if (!session.isEstablished) {
             Log.e(TAG, "Session ${session.id} not established")
@@ -167,7 +167,55 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         }
     }
     
-    // Create frame with proper headers and encryption
+    // Decrypt message from ByteArray (for received messages) - simplified approach
+    fun decryptMessage(session: Session, encryptedData: ByteArray): String? {
+        if (!session.isEstablished) {
+            Log.e(TAG, "Session ${session.id} not established")
+            return null
+        }
+        
+        return try {
+            // Try to parse as Frame first (legacy support)
+            val frame = Frame.fromByteArray(encryptedData)
+            if (frame != null) {
+                return decryptMessage(session, frame)
+            }
+            
+            // For new simplified approach, decrypt directly
+            val rxKey = session.rxKey ?: throw IllegalStateException("Session not established")
+            
+            // Generate nonce from session info (simplified approach)
+            val nonce = cryptoManager.generateNonce(session.id, deviceId, 0)
+            
+            // Decrypt the encrypted data directly
+            val decrypted = cryptoManager.decryptWithAAD(
+                rxKey,
+                encryptedData,
+                ByteArray(0), // Empty AAD for simplified decryption
+                nonce
+            ) ?: return null
+            
+            // Try to parse as Payload
+            val payload = Payload.fromByteArray(decrypted)
+            if (payload != null) {
+                // Decompress if needed
+                val finalData = if (payload.isCompressed) {
+                    cryptoManager.decompressData(payload.data, payload.originalSize)
+                } else {
+                    payload.data
+                }
+                return String(finalData)
+            }
+            
+            // If not a payload, return as plain text
+            String(decrypted)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to decrypt message from ByteArray", e)
+            null
+        }
+    }
+    
+    // Create frame with proper headers and encryption (legacy - kept for backward compatibility)
     private fun createFrame(
         session: Session,
         payload: Payload,
@@ -206,7 +254,34 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         )
     }
     
-    // Create AAD (Associated Authenticated Data)
+    // Encrypt payload directly (simplified approach - no Frame wrapper)
+    private fun encryptPayload(
+        session: Session,
+        payload: Payload,
+        destinationId: Int,
+        isCompressed: Boolean
+    ): ByteArray {
+        val sequence = session.sendCounter.incrementAndGet()
+        val nonce = cryptoManager.generateNonce(session.id, deviceId, sequence)
+        
+        // Prepare payload bytes
+        val payloadBytes = payload.toByteArray()
+        
+        // Encrypt payload with minimal AAD
+        val aad = createSimpleAAD(session, destinationId, isCompressed)
+        val txKey = session.txKey ?: throw IllegalStateException("Session not established")
+        val encryptionResult = cryptoManager.encryptWithAAD(
+            txKey,
+            payloadBytes,
+            aad,
+            nonce
+        )
+        
+        // Return just the encrypted data (no Frame wrapper)
+        return encryptionResult.ciphertext
+    }
+    
+    // Create AAD (Associated Authenticated Data) - legacy approach
     private fun createAAD(
         session: Session,
         destinationId: Int,
@@ -223,6 +298,19 @@ class SessionManager(private val cryptoManager: CryptoManager) {
         buffer.putInt(session.id)
         buffer.putInt(sequence)
         buffer.put(32) // TTL
+        return buffer.array()
+    }
+    
+    // Create simple AAD (Associated Authenticated Data) - simplified approach
+    private fun createSimpleAAD(
+        session: Session,
+        destinationId: Int,
+        isCompressed: Boolean
+    ): ByteArray {
+        val buffer = java.nio.ByteBuffer.allocate(12).order(java.nio.ByteOrder.BIG_ENDIAN)
+        buffer.putInt(session.id)
+        buffer.putInt(destinationId)
+        buffer.putInt(if (isCompressed) 1 else 0)
         return buffer.array()
     }
     

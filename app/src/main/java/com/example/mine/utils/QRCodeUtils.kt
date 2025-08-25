@@ -1,16 +1,17 @@
 package com.example.mine.utils
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Base64
 import android.util.Log
+import androidx.core.graphics.set
+import com.example.mine.crypto.QRCodeData
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.WriterException
 import com.google.zxing.common.BitMatrix
 import com.google.zxing.qrcode.QRCodeWriter
 import java.security.PublicKey
-import java.util.Base64
 
 class QRCodeUtils {
     
@@ -25,7 +26,7 @@ class QRCodeUtils {
         return try {
             // Convert public key to base64 string
             val publicKeyBytes = publicKey.encoded
-            val publicKeyString = Base64.getEncoder().encodeToString(publicKeyBytes)
+            val publicKeyString = Base64.encodeToString(publicKeyBytes, Base64.DEFAULT)
             
             // Create QR code writer
             val hints = HashMap<EncodeHintType, Any>().apply {
@@ -68,7 +69,7 @@ class QRCodeUtils {
         return try {
             // Convert public key to base64 string
             val publicKeyBytes = publicKey.encoded
-            val publicKeyString = Base64.getEncoder().encodeToString(publicKeyBytes)
+            val publicKeyString = Base64.encodeToString(publicKeyBytes, Base64.DEFAULT)
             
             // Create QR code writer
             val hints = HashMap<EncodeHintType, Any>().apply {
@@ -90,7 +91,7 @@ class QRCodeUtils {
             
             for (x in 0 until size) {
                 for (y in 0 until size) {
-                    bitmap.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                    bitmap[x, y] = if (bitMatrix[x, y]) Color.BLACK else Color.WHITE
                 }
             }
             
@@ -199,7 +200,7 @@ class QRCodeUtils {
         return try {
             // Convert public key to base64 string
             val publicKeyBytes = publicKey.encoded
-            val publicKeyString = Base64.getEncoder().encodeToString(publicKeyBytes)
+            val publicKeyString = Base64.encodeToString(publicKeyBytes, Base64.DEFAULT)
             
             // Generate QR code with custom colors
             generateQRCode(publicKeyString, size, foregroundColor, backgroundColor)
@@ -214,7 +215,7 @@ class QRCodeUtils {
     fun parsePublicKeyFromQR(qrData: String): ByteArray? {
         return try {
             // Decode base64 string to get public key bytes
-            val publicKeyBytes = Base64.getDecoder().decode(qrData)
+            val publicKeyBytes = Base64.decode(qrData, Base64.DEFAULT)
             Log.d(TAG, "Successfully parsed public key from QR code: ${publicKeyBytes.size} bytes")
             publicKeyBytes
         } catch (e: IllegalArgumentException) {
@@ -229,12 +230,107 @@ class QRCodeUtils {
     // Validate QR code data format
     fun isValidPublicKeyQR(qrData: String): Boolean {
         return try {
-            val decoded = Base64.getDecoder().decode(qrData)
+            val decoded = Base64.decode(qrData, Base64.DEFAULT)
             // Basic validation - check if it looks like a public key
             // In real implementation, you'd validate the actual key format
             decoded.size > 0 && decoded.size < 10000 // Reasonable size for public key
         } catch (e: Exception) {
             false
         }
+    }
+    
+    // Generate QR code for enhanced QRCodeData structure
+    fun generateQRCode(qrData: QRCodeData, size: Int = QR_SIZE): Bitmap? {
+        return try {
+            val jsonString = qrData.toJson()
+            Log.d(TAG, "Generating QR code for enhanced data: $jsonString")
+            generateQRCode(jsonString, size)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to generate QR code for enhanced data", e)
+            null
+        }
+    }
+    
+    // Generate QR code for enhanced QRCodeData with custom colors
+    fun generateQRCode(
+        qrData: QRCodeData,
+        size: Int = QR_SIZE,
+        foregroundColor: Int = Color.BLACK,
+        backgroundColor: Int = Color.WHITE
+    ): Bitmap? {
+        return try {
+            val jsonString = qrData.toJson()
+            Log.d(TAG, "Generating QR code for enhanced data with custom colors: $jsonString")
+            generateQRCode(jsonString, size, foregroundColor, backgroundColor)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to generate QR code for enhanced data with custom colors", e)
+            null
+        }
+    }
+    
+    // Parse QR code data to extract QRCodeData object
+    fun parseQRCodeData(qrData: String): QRCodeData? {
+        return try {
+            // First try to parse as JSON (new format)
+            val parsedData = QRCodeData.fromJson(qrData)
+            if (parsedData != null && QRCodeData.isValid(parsedData)) {
+                Log.d(TAG, "Successfully parsed QR code data as JSON format")
+                return parsedData
+            }
+            
+            // Fallback: try to parse as base64 public key (old format)
+            val publicKeyBytes = parsePublicKeyFromQR(qrData)
+            if (publicKeyBytes != null) {
+                Log.d(TAG, "Parsed QR code data as legacy base64 format")
+                // Create a minimal QRCodeData object for backward compatibility
+                return QRCodeData(
+                    publicKey = qrData,
+                    fusionNode = "UNKNOWN"
+                )
+            }
+            
+            Log.e(TAG, "Failed to parse QR code data in any supported format")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing QR code data", e)
+            null
+        }
+    }
+    
+    // Validate enhanced QR code data
+    fun isValidQRCodeData(qrData: String): Boolean {
+        return try {
+            val parsedData = QRCodeData.fromJson(qrData)
+            parsedData != null && QRCodeData.isValid(parsedData)
+        } catch (e: Exception) {
+            // Fallback to old format validation
+            isValidPublicKeyQR(qrData)
+        }
+    }
+    
+    // Get QR code information for display
+    fun getQRCodeInfo(qrData: String): String {
+        return try {
+            val parsedData = QRCodeData.fromJson(qrData)
+            if (parsedData != null && QRCodeData.isValid(parsedData)) {
+                return """
+                    Fusion Node: ${parsedData.fusionNode}
+                    Public Key: ${parsedData.publicKey.take(20)}...
+                    Format: Simplified JSON
+                """.trimIndent()
+            } else {
+                return "Legacy QR Code Format"
+            }
+        } catch (e: Exception) {
+            "Invalid QR Code Format"
+        }
+    }
+    
+    // Format time remaining in MM:SS format
+    private fun formatTimeRemaining(timeRemainingMs: Long): String {
+        val seconds = timeRemainingMs / 1000
+        val minutes = seconds / 60
+        val remainingSeconds = seconds % 60
+        return String.format("%02d:%02d", minutes, remainingSeconds)
     }
 }

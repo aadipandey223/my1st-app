@@ -328,9 +328,26 @@ class BleManager(private val context: Context) {
     }
 
     private fun handleReceivedMessage(message: ByteArray) {
+        Log.d(TAG, "BLE received message: ${message.size} bytes")
+        
+        // Store in local list
         val currentMessages = _receivedMessages.value.toMutableList()
         currentMessages.add(message)
         _receivedMessages.value = currentMessages
+        
+        // Forward to ViewModel for processing
+        messageCallback?.onMessageReceived(message)
+    }
+    
+    // Callback interface for message handling
+    interface MessageCallback {
+        fun onMessageReceived(message: ByteArray)
+    }
+    
+    private var messageCallback: MessageCallback? = null
+    
+    fun setMessageCallback(callback: MessageCallback?) {
+        messageCallback = callback
     }
 
     fun getConnectionStatus(): ConnectionStatus = _connectionStatus.value

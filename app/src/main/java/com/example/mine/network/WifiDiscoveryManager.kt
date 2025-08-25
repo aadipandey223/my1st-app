@@ -268,6 +268,19 @@ class WifiDiscoveryManager(private val context: Context) {
         context.registerReceiver(connectionReceiver, filter)
     }
     
+    // Disconnect from current network
+    fun disconnectFromNetwork() {
+        try {
+            Log.d(TAG, "Disconnecting from WiFi network...")
+            // Reset connection state
+            _isConnected.value = false
+            _connectionStatus.value = "Disconnected"
+            Log.d(TAG, "Disconnected from WiFi network")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error disconnecting from WiFi network", e)
+        }
+    }
+    
     // Connect to a specific network
     fun connectToNetwork(network: FusionWifiNetwork, password: String? = null): Boolean {
         try {
@@ -739,5 +752,49 @@ class WifiDiscoveryManager(private val context: Context) {
     init {
         registerConnectionReceiver()
         getCurrentConnection() // Get initial connection status
+    }
+    
+    // Get currently connected network
+    fun getConnectedNetwork(): FusionWifiNetwork? {
+        return try {
+            if (!isWifiSupported() || !isWifiEnabled()) {
+                return null
+            }
+            
+            val connectionInfo = wifiManager.connectionInfo
+            if (connectionInfo != null && connectionInfo.networkId != -1) {
+                val ssid = connectionInfo.ssid?.removeSurrounding("\"") ?: ""
+                val bssid = connectionInfo.bssid ?: ""
+                val rssi = connectionInfo.rssi
+                val frequency = connectionInfo.frequency
+                
+                // Create FusionWifiNetwork object for connected network
+                val connectedNetwork = FusionWifiNetwork(
+                    ssid = ssid,
+                    bssid = bssid,
+                    rssi = rssi,
+                    frequency = frequency,
+                    channel = getChannelFromFrequency(frequency),
+                    securityType = getSecurityType(connectionInfo),
+                    capabilities = "" // Would need to get from scan results
+                )
+                
+                Log.d(TAG, "Connected to network: $ssid")
+                return connectedNetwork
+            }
+            
+            null
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting connected network", e)
+            null
+        }
+    }
+    
+    // Get security type from connection info
+    private fun getSecurityType(connectionInfo: android.net.wifi.WifiInfo): String {
+        // This is a simplified implementation
+        // In a real app, you'd parse the capabilities string
+        return "WPA2" // Default assumption
     }
 }
