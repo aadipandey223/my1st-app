@@ -23,12 +23,13 @@ class WifiManager(private val context: Context) {
     companion object {
         private const val TAG = "WifiManager"
         private const val FUSION_SSID_PREFIX = "FUSION_"
-        private const val FUSION_PORT = 8080
+        private const val FUSION_PORT = 18080 // Updated to match ESP32 port
         private const val CONNECTION_TIMEOUT = 5000
     }
     
     private val wifiManager: WifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private val executor = Executors.newCachedThreadPool()
+    private val tcpManager = TcpManager() // Add TCP manager for ESP32 communication
     
     // State flows
     private val _discoveredNetworks = MutableStateFlow<List<FusionWifiNetwork>>(emptyList())
@@ -45,47 +46,98 @@ class WifiManager(private val context: Context) {
         return wifiManager.isWifiEnabled
     }
     
+    // Get TCP connection status
+    fun getTcpConnectionStatus(): StateFlow<TcpConnectionStatus> {
+        return tcpManager.connectionStatus
+    }
+    
+    // Get connected Node ID
+    fun getConnectedNodeId(): StateFlow<String?> {
+        return tcpManager.connectedNodeId
+    }
+    
+    // Get received TCP messages
+    fun getReceivedTcpMessages(): StateFlow<List<TcpMessage>> {
+        return tcpManager.receivedMessages
+    }
+    
     // Start scanning for fusion networks
     fun startScan() {
         if (!isWifiEnabled()) {
             Log.e(TAG, "WiFi is not enabled")
             return
         }
-        
-        // No location permission required for basic WiFi scanning
-        
-        val success = wifiManager.startScan()
-        if (success) {
-            Log.d(TAG, "Started WiFi scan for fusion networks")
-            processScanResults()
-        } else {
-            Log.e(TAG, "Failed to start WiFi scan")
+
+        // Explicit permission checks per API level
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "NEARBY_WIFI_DEVICES permission required for WiFi scanning on Android 13+")
+                _discoveredNetworks.value = emptyList()
+                return
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "ACCESS_FINE_LOCATION permission required for WiFi scanning")
+                _discoveredNetworks.value = emptyList()
+                return
+            }
+        }
+
+        try {
+            val success = wifiManager.startScan()
+            if (success) {
+                Log.d(TAG, "Started WiFi scan for fusion networks")
+                processScanResults()
+            } else {
+                Log.e(TAG, "Failed to start WiFi scan")
+            }
+        } catch (se: SecurityException) {
+            Log.e(TAG, "SecurityException starting WiFi scan", se)
+            _discoveredNetworks.value = emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error starting WiFi scan", e)
+            _discoveredNetworks.value = emptyList()
         }
     }
     
     // Process scan results to find fusion networks
     private fun processScanResults() {
-        // No location permission required for basic WiFi scanning
-        
-        val scanResults = wifiManager.scanResults
-        val fusionNetworks = mutableListOf<FusionWifiNetwork>()
-        
-        for (result in scanResults) {
-            // Show all networks, not just fusion networks
-            val fusionNetwork = FusionWifiNetwork(
-                ssid = result.SSID,
-                bssid = result.BSSID,
-                rssi = result.level,
-                capabilities = result.capabilities,
-                frequency = result.frequency,
-                securityType = getSecurityType(result.capabilities),
-                channel = getChannelFromFrequency(result.frequency)
-            )
-            fusionNetworks.add(fusionNetwork)
+        try {
+            // Check for location permission (required for WiFi scanning on Android 6+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "Location permission required for WiFi scanning")
+                    _discoveredNetworks.value = emptyList()
+                    return
+                }
+            }
+            
+            val scanResults = wifiManager.scanResults
+            val fusionNetworks = mutableListOf<FusionWifiNetwork>()
+            
+            for (result in scanResults) {
+                // Show all networks, not just fusion networks
+                val fusionNetwork = FusionWifiNetwork(
+                    ssid = result.SSID,
+                    bssid = result.BSSID,
+                    rssi = result.level,
+                    capabilities = result.capabilities,
+                    frequency = result.frequency,
+                    securityType = getSecurityType(result.capabilities),
+                    channel = getChannelFromFrequency(result.frequency)
+                )
+                fusionNetworks.add(fusionNetwork)
+            }
+            
+            _discoveredNetworks.value = fusionNetworks
+            Log.d(TAG, "Found ${fusionNetworks.size} fusion networks")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Security exception while processing scan results", e)
+            _discoveredNetworks.value = emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing scan results", e)
+            _discoveredNetworks.value = emptyList()
         }
-        
-        _discoveredNetworks.value = fusionNetworks
-        Log.d(TAG, "Found ${fusionNetworks.size} fusion networks")
     }
     
     // Check if network is a fusion network
@@ -127,49 +179,68 @@ class WifiManager(private val context: Context) {
     
     // Connect using legacy method (Android 9 and below)
     private fun connectUsingLegacyMethod(fusionNetwork: FusionWifiNetwork) {
-        Log.d(TAG, "Using legacy method to connect to ${fusionNetwork.ssid}")
-        
-        // Create network configuration
-        val config = WifiConfiguration().apply {
-            SSID = "\"${fusionNetwork.ssid}\""
-            allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE) // Open network
-        }
-        
-        // Add network
-        val networkId = wifiManager.addNetwork(config)
-        if (networkId != -1) {
-            val success = wifiManager.enableNetwork(networkId, true)
-            if (success) {
-                Log.d(TAG, "Successfully connected to ${fusionNetwork.ssid}")
-                establishSocketConnection(fusionNetwork)
-            } else {
-                Log.e(TAG, "Failed to enable network")
-                _connectionStatus.value = WifiConnectionStatus.Error("Failed to enable network")
+        try {
+            Log.d(TAG, "Using legacy method to connect to ${fusionNetwork.ssid}")
+            
+            // Check for required permissions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    Log.e(TAG, "Location permission required for WiFi connection")
+                    _connectionStatus.value = WifiConnectionStatus.Error("Location permission required")
+                    return
+                }
             }
-        } else {
-            Log.e(TAG, "Failed to add network")
-            _connectionStatus.value = WifiConnectionStatus.Error("Failed to add network")
+            
+            // Create network configuration
+            val config = WifiConfiguration().apply {
+                SSID = "\"${fusionNetwork.ssid}\""
+                allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE) // Open network
+            }
+            
+            // Add network
+            val networkId = wifiManager.addNetwork(config)
+            if (networkId != -1) {
+                val success = wifiManager.enableNetwork(networkId, true)
+                if (success) {
+                    Log.d(TAG, "Successfully connected to ${fusionNetwork.ssid}")
+                    establishSocketConnection(fusionNetwork)
+                } else {
+                    Log.e(TAG, "Failed to enable network")
+                    _connectionStatus.value = WifiConnectionStatus.Error("Failed to enable network")
+                }
+            } else {
+                Log.e(TAG, "Failed to add network")
+                _connectionStatus.value = WifiConnectionStatus.Error("Failed to add network")
+            }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Security exception while connecting to network", e)
+            _connectionStatus.value = WifiConnectionStatus.Error("Permission denied: ${e.message}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error connecting to network", e)
+            _connectionStatus.value = WifiConnectionStatus.Error("Connection failed: ${e.message}")
         }
     }
     
     // Establish socket connection to fusion node
     private fun establishSocketConnection(fusionNetwork: FusionWifiNetwork) {
         try {
-            val socket = Socket()
-            socket.connect(InetSocketAddress(fusionNetwork.bssid, FUSION_PORT), CONNECTION_TIMEOUT)
-            
-            currentSocket = socket
+            // First establish WiFi connection
+            currentSocket = null
             isConnected = true
             _connectionStatus.value = WifiConnectionStatus.Connected(fusionNetwork)
             
-            Log.d(TAG, "Socket connection established to ${fusionNetwork.ssid}")
+            Log.d(TAG, "WiFi connected to ${fusionNetwork.ssid}")
             
-            // Start listening for messages
-            startMessageListener(socket)
+            // Now establish TCP connection to ESP32
+            // ESP32 typically uses SoftAP with IP 192.168.4.1
+            val esp32IpAddress = "192.168.4.1" // Default ESP32 SoftAP IP
+            Log.d(TAG, "Attempting TCP connection to ESP32 at $esp32IpAddress:$FUSION_PORT")
+            
+            tcpManager.connectToFusionNode(esp32IpAddress, FUSION_PORT)
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to establish socket connection", e)
-            _connectionStatus.value = WifiConnectionStatus.Error("Socket connection failed: ${e.message}")
+            Log.e(TAG, "Failed to establish connection", e)
+            _connectionStatus.value = WifiConnectionStatus.Error("Connection failed: ${e.message}")
         }
     }
     

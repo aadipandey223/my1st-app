@@ -55,12 +55,12 @@ class BluetoothDiscoveryManager(private val context: Context) {
         return bluetoothAdapter?.isEnabled == true
     }
     
-    // Check if we have required permissions
+    // Check for  permissions
     fun hasRequiredPermissions(): Boolean {
         val hasScanPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
         } else {
-            true // No scan permission required for older versions
+            true // No  permission required 
         }
         
         val hasConnectPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

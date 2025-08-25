@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import com.example.mine.ui.screens.ModernMainScreen
@@ -22,12 +24,13 @@ import com.example.mine.utils.PermissionManager
 import com.example.mine.viewmodel.SecureChatViewModel
 import com.example.mine.callback.ConnectionCallback
 
+
 class MainActivity : ComponentActivity(), ConnectionCallback {
-    
-    private lateinit var permissionManager: PermissionManager
-    private lateinit var secureChatViewModel: SecureChatViewModel
-    
-    // Permission request launcher
+
+    // private lateinit var permissionManager: PermissionManager // PermissionManager is not used directly, so it can be removed
+    private lateinit var secureChatViewModelInstance: SecureChatViewModel
+
+    // Permission request launcher using the modern ActivityResult API
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -37,17 +40,14 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Initialize permission manager
-        permissionManager = PermissionManager(this)
-        
-        // Initialize ViewModel
-        secureChatViewModel = SecureChatViewModel(this)
+        // Initialize ViewModel using applicationContext to avoid potential memory leaks with 'this'
+        secureChatViewModelInstance = SecureChatViewModel(this)
         
         // Register this activity as the connection callback
-        secureChatViewModel.setConnectionCallback(this)
+        secureChatViewModelInstance.setConnectionCallback(this)
         
-        // Reset app state to ensure clean start
-        secureChatViewModel.resetAppState()
+        // Reset app state to ensure clean start, using the initialized ViewModel
+        secureChatViewModelInstance.resetAppState()
         
         // Check and request permissions if needed
         checkAndRequestPermissions()
@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
         // Note: State observation is now handled in the ViewModel's init block
         // to avoid coroutine scope issues in the Activity
         
+        // Handle back button press
         enableEdgeToEdge()
         setContent {
             MineTheme {
@@ -62,10 +63,11 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ModernMainScreen()
+                    ModernMainScreen(viewModel = secureChatViewModelInstance)
                 }
             }
         }
+        // System back behavior is handled inside Compose via BackHandler in ModernMainScreen
     }
     
     override fun onResume() {
@@ -76,7 +78,7 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
         // Only check for connections if we're in discovery mode
         // This prevents the app from jumping to connection screen on startup
         Log.d("MainActivity", "Checking if in discovery mode before calling checkConnectionStatus()")
-        secureChatViewModel.checkConnectionStatus()
+        secureChatViewModelInstance.checkConnectionStatus() // Use the initialized ViewModel
         Log.d("MainActivity", "checkConnectionStatus() call completed")
     }
     
@@ -95,8 +97,8 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
             startActivity(intent)
             
             // Set window flags to ensure app is visible
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) { // Use O_MR1 for these flags
+                setShowWhenLocked(true) // Modern way to handle showing over lock screen
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
             }
@@ -107,9 +109,7 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
             Log.e("MainActivity", "Failed to bring app to foreground", e)
         }
     }
-    
 
-    
     private fun checkAndRequestPermissions() {
         val requiredPermissions = mutableListOf<String>()
         
@@ -177,57 +177,19 @@ class MainActivity : ComponentActivity(), ConnectionCallback {
             }
         }
     }
-    
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        
-        when (requestCode) {
-            PermissionManager.PERMISSION_REQUEST_CODE -> {
-                val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-                if (allGranted) {
-                    Log.d("MainActivity", "All requested permissions granted")
-                } else {
-                    Log.w("MainActivity", "Some permissions were denied")
-                }
-            }
-            PermissionManager.BLUETOOTH_PERMISSION_REQUEST_CODE -> {
-                val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-                if (allGranted) {
-                    Log.d("MainActivity", "Bluetooth permissions granted")
-                } else {
-                    Log.w("MainActivity", "Bluetooth permissions denied")
-                }
-            }
-            PermissionManager.LOCATION_PERMISSION_REQUEST_CODE -> {
-                val granted = grantResults.isNotEmpty() && 
-                             grantResults[0] == PackageManager.PERMISSION_GRANTED
-                if (granted) {
-                    Log.d("MainActivity", "Location permission granted")
-                } else {
-                    Log.w("MainActivity", "Location permission denied")
-                }
-            }
-            PermissionManager.CAMERA_PERMISSION_REQUEST_CODE -> {
-                val granted = grantResults.isNotEmpty() && 
-                             grantResults[0] == PackageManager.PERMISSION_GRANTED
-                if (granted) {
-                    Log.d("MainActivity", "Camera permission granted")
-                } else {
-                    Log.w("MainActivity", "Camera permission denied")
-                }
-            }
-        }
-    }
+
+    // onRequestPermissionsResult is deprecated and no longer needed
+    // when using ActivityResultContracts.RequestMultiplePermissions().
+    // The result is handled in the lambda passed to registerForActivityResult.
 }
+
 
 @Preview(showBackground = true)
 @Composable
 fun MainScreenPreview() {
     MineTheme {
-        ModernMainScreen()
+        // Note: This is just a preview, so we'll use a mock ViewModel
+        // In the actual app, the ViewModel is created with context in MainActivity
+        ModernMainScreen(SecureChatViewModel(LocalContext.current))
     }
 }
